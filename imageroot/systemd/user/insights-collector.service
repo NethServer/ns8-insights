@@ -1,0 +1,25 @@
+#
+# Copyright (C) 2026 Nethesis S.r.l.
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+
+[Unit]
+Description=Nethesis insights collector
+# Loki may run on another node: the collector finds it through Redis and
+# retries on its own while it is unreachable.
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=%E/state/environment
+ExecStart=runagent %E/bin/insights-collector --daemon
+SyslogIdentifier=%u/%N
+Restart=on-failure
+RestartSec=30s
+# Defense in depth alongside the collector's own per-window memory hygiene:
+# a runaway leak gets killed and restarted rather than growing unbounded.
+MemoryMax=256M
+
+[Install]
+WantedBy=default.target
