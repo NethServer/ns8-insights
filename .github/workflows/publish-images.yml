@@ -16,7 +16,7 @@ jobs:
     uses: NethServer/ns8-github-actions/.github/workflows/publish-branch.yml@v1
   module:
     needs: publish-images
-    uses: NethServer/ns8-github-actions/.github/workflows/module-info.yml@v1
+    uses: ./.github/workflows/module-info.yml
   trivy:
     needs: module
 

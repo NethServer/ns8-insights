@@ -1,0 +1,110 @@
+name: "Retrieve NS8 module informations"
+
+on:
+  workflow_call:
+    outputs:
+      owner:
+        description: "The owner of the repository, that can an users or an organization"
+        value: ${{ jobs.module.outputs.owner}}
+      name:
+        description: "The module name"
+        value: ${{ jobs.module.outputs.name}}
+      tag:
+        description: "The container's tag of the module"
+        value: ${{ jobs.module.outputs.tag }}
+      sha:
+        description: "The git commit hash of the current module version"
+        value: ${{ jobs.module.outputs.sha }}
+      short_sha:
+        description: "First 8 chars of the commit hash"
+        value: ${{ jobs.module.outputs.short_sha }}
+      image:
+        description: "The full image name of the module"
+        value: ${{ jobs.module.outputs.image }}
+      images:
+        description: "The list of all images of the module"
+        value: ${{ jobs.module.outputs.images }}
+      release:
+        description: "The release type of the module"
+        value: ${{ jobs.module.outputs.release }}
+
+
+jobs:
+  module:
+    name: "Get module info"
+    runs-on: ubuntu-26.04
+    outputs:
+      owner: ${{ steps.owner.outputs.name }}
+      name: ${{ steps.name.outputs.name }}
+      tag: ${{ steps.tag.outputs.name }}
+      sha: ${{ steps.sha.outputs.value }}
+      short_sha: ${{ steps.short_sha.outputs.value }}
+      image: ${{ steps.image.outputs.name }}
+      images: ${{ steps.images.outputs.list }}
+      release: ${{ steps.release.outputs.type }}
+    steps:
+      - id: tag
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_run" ]
+          then
+            tag="${{ github.event.workflow_run.head_branch }}"
+          elif [ "${{ github.event_name }}" = "pull_request" ]
+          then
+            tag=${{ github.head_ref }}
+          else
+            tag="${{ github.ref_name }}"
+          fi
+          if [ "$tag" = "main" ]
+          then
+            tag="latest"
+          fi
+          # Sanitize tag, slash is forbidden
+          echo "name=${tag//\//-}" >> $GITHUB_OUTPUT
+      - id: owner
+        run: |
+          owner=$(basename ${{ github.event.organization.url || github.event.repository.owner.url }} |  tr '[:upper:]' '[:lower:]')
+          echo "name=${owner}" >> $GITHUB_OUTPUT
+      - id: name
+        run: |
+          name=$(basename ${{ github.repository }} |  tr '[:upper:]' '[:lower:]' | sed -e 's/^ns8-\(.*\)$/\1/' )
+          echo "name=${name}" >> $GITHUB_OUTPUT
+      - id: sha
+        run: |
+          sha=${{ github.event.workflow_run.head_sha || github.sha }}
+          echo "value=${sha}" >> $GITHUB_OUTPUT
+      - id: short_sha
+        run: echo "value=$( echo ${{ steps.sha.outputs.value }} | cut -c1-8 )" >> $GITHUB_OUTPUT
+      - id: image
+        run: |
+          owner=${{ steps.owner.outputs.name }}
+          name=${{ steps.name.outputs.name }}
+          tag=${{ steps.tag.outputs.name }}
+          echo "name=ghcr.io/${owner}/${name}:${tag}" >> $GITHUB_OUTPUT
+      - id: images
+        run: |
+          # Get the list of all images of the module including the module image
+          podman pull ${{ steps.image.outputs.name }} || :
+          images=$(podman image inspect ${{ steps.image.outputs.name }}  \
+              -f '{{index .Config.Labels "org.nethserver.images"}}' | \
+            jq -Rc '((gsub("^\\s+|\\s+$"; "") | split("\\s+";null) | map(select(length > 0))) + ["${{ steps.image.outputs.name }}"])')
+
+          echo "list=${images}" >> $GITHUB_OUTPUT
+      - name: Check release type
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ "${{ steps.tag.outputs.name }}" = "latest" ]; then
+            echo "type=latest" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          if gh release view --repo ${{ github.repository }} ${{ steps.tag.outputs.name }} > /dev/null 2>&1; then
+            if gh release  view --repo ${{ github.repository }} ${{ steps.tag.outputs.name }} --json isPrerelease -q '.isPrerelease' | grep -q 'true'; then
+              echo "type=testing" >> $GITHUB_OUTPUT
+            else
+              echo "type=stable" >> $GITHUB_OUTPUT
+            fi
+          else
+            echo "type=none" >> $GITHUB_OUTPUT
+          fi
