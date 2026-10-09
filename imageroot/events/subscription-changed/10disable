@@ -1,0 +1,29 @@
+#!/usr/bin/env python3
+
+#
+# Copyright (C) 2026 Nethesis S.r.l.
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+
+#
+# The server accepts data only from subscribed machines: stop the
+# collector when the subscription ends. A new subscription does not
+# restart it; the user enables it again from the Settings page.
+#
+
+import json
+import os
+import sys
+
+import agent
+import insights
+
+if os.getenv('AGENT_EVENT_SOURCE') != 'cluster':
+    sys.exit(0)
+
+event = json.load(sys.stdin)
+if event.get('action') != 'terminated':
+    sys.exit(0)
+
+agent.set_env('INSIGHTS_ENABLED', '0')
+insights.stop_collector(check=False)

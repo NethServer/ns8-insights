@@ -1,0 +1,34 @@
+#!/usr/bin/env python3
+
+#
+# Copyright (C) 2026 Nethesis S.r.l.
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+
+#
+# The collector reads the default Loki instance. When it changes, the
+# stream position of the old instance means nothing on the new one:
+# forget it and restart the collector on the new instance.
+#
+
+import json
+import os
+import sys
+
+import agent
+import insights
+
+if os.getenv('AGENT_EVENT_SOURCE') != 'cluster':
+    sys.exit(0)
+
+event = json.load(sys.stdin)
+if event.get('instance') != 'loki':
+    sys.exit(0)
+
+# Stop first: the collector saves its cursor on exit.
+enabled = os.getenv('INSIGHTS_ENABLED', '0') == '1'
+if enabled:
+    agent.run_helper('systemctl', '--user', 'stop', insights.SERVICE).check_returncode()
+insights.reset_cursor()
+if enabled:
+    agent.run_helper('systemctl', '--user', 'start', insights.SERVICE).check_returncode()

@@ -1,0 +1,13 @@
+#!/usr/bin/env python3
+
+#
+# Copyright (C) 2026 Nethesis S.r.l.
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+
+import agent
+import insights
+
+agent.set_env('INSIGHTS_ENABLED', '0')
+agent.set_env('INSIGHTS_SERVER_URL', insights.DEFAULT_SERVER_URL)
+agent.set_env('INSIGHTS_VERIFY_TLS', '1')

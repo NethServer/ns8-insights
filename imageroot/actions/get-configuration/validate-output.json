@@ -2,7 +2,54 @@
     "$schema": "http://json-schema.org/draft-07/schema#",
     "title": "get-configuration output",
     "$id": "http://schema.nethserver.org/insights/get-configuration-output.json",
-    "description": "Get insights configuration",
-    "examples": [],
-    "type": "object"
+    "description": "Get the insights module configuration",
+    "examples": [
+        {
+            "enabled": true,
+            "base_url": "https://insights.nethesis.it",
+            "verify_tls": true,
+            "status": "active",
+            "subscription_configured": true,
+            "active_elsewhere": "",
+            "last_run": "2026-10-09T12:15:42+00:00"
+        }
+    ],
+    "type": "object",
+    "required": [
+        "enabled",
+        "base_url",
+        "verify_tls",
+        "status",
+        "subscription_configured",
+        "active_elsewhere",
+        "last_run"
+    ],
+    "properties": {
+        "enabled": {
+            "type": "boolean"
+        },
+        "base_url": {
+            "type": "string"
+        },
+        "verify_tls": {
+            "type": "boolean"
+        },
+        "status": {
+            "type": "string",
+            "enum": ["active", "failed", "inactive"],
+            "description": "State of the collector service"
+        },
+        "subscription_configured": {
+            "type": "boolean",
+            "description": "The cluster has a subscription: required to enable the collector"
+        },
+        "active_elsewhere": {
+            "type": "string",
+            "description": "Id of another insights instance with the collector enabled, empty if none"
+        },
+        "last_run": {
+            "type": "string",
+            "description": "Timestamp of the last bundle accepted by the server, empty if none"
+        }
+    }
 }

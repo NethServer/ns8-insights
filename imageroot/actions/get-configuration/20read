@@ -1,14 +1,41 @@
 #!/usr/bin/env python3
 
 #
-# Copyright (C) 2023 Nethesis S.r.l.
+# Copyright (C) 2026 Nethesis S.r.l.
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
 
 import json
+import os
+import subprocess
 import sys
-import agent
 
-config = {}
+import agent
+import insights
+
+rdb = agent.redis_connect(use_replica=True)
+
+unit = subprocess.run(['systemctl', '--user', 'is-active', insights.SERVICE],
+                      capture_output=True, text=True)
+status = unit.stdout.strip()
+if status not in ('active', 'failed'):
+    status = 'inactive'
+
+# The collector writes it after each bundle accepted by the server.
+try:
+    with open('insights_last_run') as last_run_file:
+        last_run = last_run_file.read().strip()
+except OSError:
+    last_run = ''
+
+config = {
+    'enabled': os.getenv('INSIGHTS_ENABLED', '0') == '1',
+    'base_url': os.getenv('INSIGHTS_SERVER_URL', insights.DEFAULT_SERVER_URL),
+    'verify_tls': os.getenv('INSIGHTS_VERIFY_TLS', '1') != '0',
+    'status': status,
+    'subscription_configured': insights.get_subscription(rdb) != (None, None),
+    'active_elsewhere': insights.find_active_elsewhere(rdb),
+    'last_run': last_run,
+}
 
 json.dump(config, fp=sys.stdout)

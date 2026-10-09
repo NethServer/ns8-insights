@@ -2,7 +2,36 @@
     "$schema": "http://json-schema.org/draft-07/schema#",
     "title": "configure-module input",
     "$id": "http://schema.nethserver.org/insights/configure-module-input.json",
-    "description": "Configure insights",
-    "examples": [],
-    "type": "object"
+    "description": "Enable or disable the insights collector",
+    "examples": [
+        {
+            "enabled": true,
+            "base_url": "https://insights.nethesis.it",
+            "verify_tls": true
+        },
+        {
+            "enabled": false
+        }
+    ],
+    "type": "object",
+    "required": [
+        "enabled"
+    ],
+    "additionalProperties": false,
+    "properties": {
+        "enabled": {
+            "type": "boolean",
+            "description": "Run the collector. Requires a cluster subscription and no other enabled insights instance in the cluster."
+        },
+        "base_url": {
+            "type": "string",
+            "format": "uri",
+            "pattern": "^https?://",
+            "description": "Root URL of the insights server, with no path. Default https://insights.nethesis.it"
+        },
+        "verify_tls": {
+            "type": "boolean",
+            "description": "Verify the TLS certificate of the insights server. Default true"
+        }
+    }
 }

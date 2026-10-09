@@ -1,0 +1,42 @@
+#!/usr/bin/env python3
+
+#
+# Copyright (C) 2026 Nethesis S.r.l.
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+
+#
+# Apply the restored configuration. The collector comes back enabled only
+# if the cluster has a subscription and no other insights instance is
+# already enabled: otherwise the restore succeeds with the collector off.
+# The stream cursor is not restored: the collector follows the log from now.
+#
+
+import os
+import sys
+
+import agent
+import insights
+
+rdb = agent.redis_connect(use_replica=True)
+
+enabled = os.getenv('INSIGHTS_ENABLED', '0') == '1'
+if enabled and insights.get_subscription(rdb) == (None, None):
+    print(agent.SD_WARNING + "No cluster subscription: the collector stays disabled", file=sys.stderr)
+    enabled = False
+if enabled:
+    active_elsewhere = insights.find_active_elsewhere(rdb)
+    if active_elsewhere:
+        print(agent.SD_WARNING + f"{active_elsewhere} is already enabled: the collector stays disabled", file=sys.stderr)
+        enabled = False
+
+response = agent.tasks.run(
+    agent_id=os.environ['AGENT_ID'],
+    action='configure-module',
+    data={
+        'enabled': enabled,
+        'base_url': os.getenv('INSIGHTS_SERVER_URL', insights.DEFAULT_SERVER_URL),
+        'verify_tls': os.getenv('INSIGHTS_VERIFY_TLS', '1') != '0',
+    },
+)
+agent.assert_exp(response['exit_code'] == 0)
