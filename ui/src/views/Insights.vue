@@ -360,10 +360,6 @@ export default {
         this.listFindingsAborted
       );
       this.core.$root.$once(
-        `${taskAction}-validation-failed-${eventId}`,
-        this.listFindingsFailed
-      );
-      this.core.$root.$once(
         `${taskAction}-completed-${eventId}`,
         this.listFindingsCompleted
       );
@@ -392,14 +388,15 @@ export default {
       this.error.listFindings = this.$t("error.generic_error");
       this.loading.listFindings = false;
     },
-    listFindingsFailed(validationErrors) {
-      this.findings = [];
-      this.error.listFindings = this.$t(
-        "insights." + validationErrors[0].error
-      );
-      this.loading.listFindings = false;
-    },
     listFindingsCompleted(taskContext, taskResult) {
+      if (taskResult.output.error) {
+        this.findings = [];
+        this.error.listFindings = this.$t(
+          "insights." + taskResult.output.error
+        );
+        this.loading.listFindings = false;
+        return;
+      }
       // the server already sorts; keep the order stable on our side too
       this.findings = [...taskResult.output.findings].sort(
         (a, b) =>

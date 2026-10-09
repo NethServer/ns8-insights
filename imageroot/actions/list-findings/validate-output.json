@@ -25,12 +25,18 @@
                     "node_refs": [{"node_id": 1, "fqdn": "node1.example.com"}],
                     "security": false
                 }
-            ]
+            ],
+            "error": ""
         }
     ],
     "type": "object",
-    "required": ["findings"],
+    "required": ["findings", "error"],
     "properties": {
+        "error": {
+            "type": "string",
+            "enum": ["", "subscription_required", "server_unauthorized", "server_unreachable", "server_tls_error", "server_error"],
+            "description": "Why the findings could not be read, empty on success"
+        },
         "findings": {
             "type": "array",
             "items": {

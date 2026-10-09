@@ -30,11 +30,14 @@ status = request.get('status', 'open')
 
 
 def fail(error, detail=''):
-    """Report a known failure the UI can translate, and stop."""
-    print(agent.SD_ERR + f"list-findings: {error} {detail}".strip(), file=sys.stderr)
-    agent.set_status('validation-failed')
-    json.dump([{'field': 'status', 'parameter': 'status', 'value': status, 'error': error}], fp=sys.stdout)
-    sys.exit(3)
+    """Report a known failure the UI can translate, and stop.
+
+    The request itself was valid: the action succeeds with an error code
+    instead of failing, so the UI shows it in place of the table.
+    """
+    print(agent.SD_WARNING + f"list-findings: {error} {detail}".strip(), file=sys.stderr)
+    json.dump({'findings': [], 'error': error}, fp=sys.stdout)
+    sys.exit(0)
 
 
 rdb = agent.redis_connect(use_replica=True)
@@ -73,4 +76,4 @@ except (TimeoutError, OSError) as ex:
 except ValueError as ex:
     fail('server_error', f"invalid JSON: {ex}")
 
-json.dump({'findings': body.get('findings') or []}, fp=sys.stdout)
+json.dump({'findings': body.get('findings') or [], 'error': ''}, fp=sys.stdout)

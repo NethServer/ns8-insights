@@ -52,7 +52,7 @@
             :line-count="5"
           ></cv-skeleton-text>
           <cv-form v-else @submit.prevent="configureModule">
-            <p class="mg-bottom">{{ $t("settings.description") }}</p>
+            <p class="toggle-description">{{ $t("settings.description") }}</p>
             <NsToggle
               value="enabled"
               :label="$t('settings.collector')"
@@ -68,7 +68,7 @@
                 $t("settings.enabled")
               }}</template>
             </NsToggle>
-            <div v-if="enabled" class="mg-bottom">
+            <div v-if="enabled" class="last-run">
               <span class="label">{{ $t("settings.last_run") }}</span>
               <span v-if="lastRun">{{ formatLastRun(lastRun) }}</span>
               <span v-else>{{ $t("settings.never") }}</span>
@@ -367,6 +367,14 @@ export default {
 
 .maxwidth {
   max-width: 38rem;
+}
+
+.toggle-description {
+  margin-bottom: $spacing-06;
+}
+
+.last-run {
+  margin-bottom: $spacing-07;
 }
 
 .label {
