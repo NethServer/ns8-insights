@@ -1,57 +1,105 @@
 {
-    "common": {
-        "required": "Obbligatorio",
-        "processing": "In elaborazione…",
-        "work_in_progress": "In lavorazione"
-    },
-    "status": {
-        "node": "Nodo",
-        "services": "Servizio | Servizi",
-        "no_volumes": "Nessun volume",
-        "title": "Stato",
-        "name": "Nome",
-        "size": "Dimensione",
-        "created": "Creato",
-        "no_services": "Nessun servizio",
-        "no_images": "Nessuna immagine",
-        "app_images": "Immagine app|Immagini app",
-        "app_instance": "Istanza app",
-        "app_volumes": "Volume app|Volumi app",
-        "installation_node": "Nodo di installazione",
-        "mount": "Percorso di mount"
-    },
-    "settings": {
-        "save": "Salva",
-        "title": "Impostazioni",
-        "configure_instance": "Configura {instance}",
-        "test_field": "Campo di test"
-    },
-    "error": {
-        "error": "Errore",
-        "404": "Risorsa non trovata",
-        "validation_error": "Errore di validazione",
-        "network_error": "Errore di rete",
-        "cannot_retrieve_installed_modules": "Impossibile elencare moduli installati",
-        "cannot_retrieve_module_info": "Impossibile recuperare info modulo",
-        "network_timeout": "Timeout di rete",
-        "generic_error": "Qualcosa è andato storto",
-        "401": "Autenticazione non valida",
-        "403": "Operazione non autorizzata"
-    },
-    "action": {
-        "configure-module": "Configura modulo",
-        "get-configuration": "Visualizza configurazione",
-        "get-status": "Visualizza stato",
-        "get-module-info": "Visualizza info modulo",
-        "get-name": "Visualizza nome",
-        "list-backup-repositories": "Elenca repository di backup",
-        "list-backups": "Elenca backup",
-        "list-installed-modules": "Elenca moduli installati"
-    },
-    "task": {
-        "cannot_create_task": "Impossibile eseguire il task {action}"
-    },
-    "about": {
-        "title": "Informazioni"
-    }
+  "common": {
+    "required": "Obbligatorio",
+    "processing": "In elaborazione…",
+    "work_in_progress": "In lavorazione"
+  },
+  "status": {
+    "node": "Nodo",
+    "services": "Servizio | Servizi",
+    "no_volumes": "Nessun volume",
+    "title": "Stato",
+    "name": "Nome",
+    "size": "Dimensione",
+    "created": "Creato",
+    "no_services": "Nessun servizio",
+    "no_images": "Nessuna immagine",
+    "app_images": "Immagine app|Immagini app",
+    "app_instance": "Istanza app",
+    "app_volumes": "Volume app|Volumi app",
+    "installation_node": "Nodo di installazione",
+    "mount": "Percorso di mount"
+  },
+  "settings": {
+    "title": "Impostazioni",
+    "configure_instance": "Configura {instance}",
+    "save": "Salva",
+    "description": "Quando è abilitato, il collettore legge i log di tutti i nodi del cluster, rimuove i dati personali e ogni 15 minuti invia un riepilogo al servizio Nethesis Insights. Il servizio lo analizza e segnala i problemi nella pagina Insights.",
+    "collector": "Analisi dei log",
+    "enabled": "Abilitato",
+    "disabled": "Disabilitato",
+    "last_run": "Ultimo invio dati",
+    "never": "Mai",
+    "advanced": "Avanzate",
+    "base_url": "URL del server Insights",
+    "base_url_helper": "URL principale del server, senza percorso",
+    "verify_tls": "Verifica certificato TLS",
+    "invalid_url": "Inserisci un URL http:// o https:// valido",
+    "subscription_required": "Sottoscrizione richiesta",
+    "subscription_required_description": "Il servizio Insights accetta dati solo da macchine con una sottoscrizione attiva. Attiva una sottoscrizione nelle Impostazioni del cluster per abilitare questo modulo.",
+    "active_elsewhere": "Già attivo su un'altra istanza",
+    "active_elsewhere_description": "L'analisi dei log è già abilitata su {instance}. Si può abilitare una sola istanza per cluster, perché ognuna legge i log dell'intero cluster."
+  },
+  "error": {
+    "error": "Errore",
+    "404": "Risorsa non trovata",
+    "validation_error": "Errore di validazione",
+    "network_error": "Errore di rete",
+    "cannot_retrieve_installed_modules": "Impossibile elencare moduli installati",
+    "cannot_retrieve_module_info": "Impossibile recuperare info modulo",
+    "network_timeout": "Timeout di rete",
+    "generic_error": "Qualcosa è andato storto",
+    "401": "Autenticazione non valida",
+    "403": "Operazione non autorizzata"
+  },
+  "action": {
+    "configure-module": "Configura modulo",
+    "get-configuration": "Visualizza configurazione",
+    "get-status": "Visualizza stato",
+    "get-module-info": "Visualizza info modulo",
+    "get-name": "Visualizza nome",
+    "list-backup-repositories": "Elenca repository di backup",
+    "list-backups": "Elenca backup",
+    "list-installed-modules": "Elenca moduli installati",
+    "list-findings": "Elenca problemi"
+  },
+  "task": {
+    "cannot_create_task": "Impossibile eseguire il task {action}"
+  },
+  "about": {
+    "title": "Informazioni"
+  },
+  "insights": {
+    "title": "Insights",
+    "page_description": "Problemi trovati nei log del cluster dal servizio Nethesis Insights. I nuovi tipi di problema vengono verificati da Nethesis prima di comparire qui.",
+    "search": "Cerca",
+    "status_filter": "Mostra",
+    "status_open": "Aperti",
+    "status_stale": "Inattivi",
+    "status_all": "Tutti",
+    "refresh": "Aggiorna",
+    "col_severity": "Gravità",
+    "col_title": "Titolo",
+    "col_summary": "Riepilogo",
+    "col_suggested_action": "Azione consigliata",
+    "col_modules": "Moduli",
+    "col_last_seen": "Ultima rilevazione",
+    "severity_critical": "Critica",
+    "severity_high": "Alta",
+    "severity_medium": "Media",
+    "severity_low": "Bassa",
+    "documentation": "Documentazione",
+    "no_findings": "Nessun problema",
+    "no_findings_description": "Nessun problema trovato nei log del cluster. I problemi compaiono qui dopo che il servizio Insights ha analizzato i dati.",
+    "no_findings_filtered": "Nessun problema trovato",
+    "no_findings_filtered_description": "Prova a cambiare la ricerca",
+    "collector_disabled": "L'analisi dei log è disabilitata",
+    "collector_disabled_description": "Abilitala nella pagina Impostazioni per inviare nuovi dati al servizio Insights.",
+    "go_to_settings": "Vai a Impostazioni",
+    "subscription_required": "Serve una sottoscrizione per leggere i problemi",
+    "server_unauthorized": "Il server Insights ha rifiutato le credenziali della sottoscrizione",
+    "server_unreachable": "Impossibile raggiungere il server Insights",
+    "server_tls_error": "Il certificato TLS del server Insights non è valido",
+    "server_error": "Il server Insights ha restituito un errore"
+  }
 }
