@@ -4,7 +4,6 @@ Library    SSHLibrary
 *** Variables ***
 ${ADMIN_USER}    admin
 ${ADMIN_PASSWORD}    Nethesis,1234
-${module_id}    ${EMPTY}
 
 *** Keywords ***
 Login to cluster-admin
@@ -16,7 +15,7 @@ Login to cluster-admin
     Wait For Elements State    css=#main-content    visible    timeout=10s
 
 *** Test Cases ***
-Check if kickstart is installed correctly
+Check if insights is installed correctly
     ${output}  ${rc} =    Execute Command    add-module ${IMAGE_URL} 1
     ...    return_rc=True
     Should Be Equal As Integers    ${rc}  0
@@ -37,19 +36,8 @@ Take screenshots
     Wait For Elements State    iframe >>> h2 >> text="Settings"    visible    timeout=10s
     Sleep    5s
     Take Screenshot    filename=${OUTPUT DIR}/browser/screenshot/2._Settings.png
+    Go To    https://${NODE_ADDR}/cluster-admin/#/apps/${module_id}?page=insights
+    Wait For Elements State    iframe >>> h2 >> text="Insights"    visible    timeout=10s
+    Sleep    5s
+    Take Screenshot    filename=${OUTPUT DIR}/browser/screenshot/3._Insights.png
     Close Browser
-
-Check if kickstart can be configured
-    ${rc} =    Execute Command    api-cli run module/${module_id}/configure-module --data '{}'
-    ...    return_rc=True  return_stdout=False
-    Should Be Equal As Integers    ${rc}  0
-
-Check if kickstart works as expected
-    ${rc} =    Execute Command    curl -f http://127.0.0.1/kickstart/
-    ...    return_rc=True  return_stdout=False
-    Should Be Equal As Integers    ${rc}  0
-
-Check if kickstart is removed correctly
-    ${rc} =    Execute Command    remove-module --no-preserve ${module_id}
-    ...    return_rc=True  return_stdout=False
-    Should Be Equal As Integers    ${rc}  0

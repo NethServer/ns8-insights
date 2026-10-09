@@ -1,19 +1,19 @@
 {
-  "name": "kickstart",
+  "name": "Insights",
   "description": {
-    "en": "My kickstart module"
+    "en": "Analyze cluster logs and report problems found by the Nethesis insights service"
   },
-  "categories": [],
+  "categories": ["monitoring"],
   "authors": [
     {
-      "name": "Name Surname",
-      "email": "author@yourmail.org"
+      "name": "Giacomo Sanchietti",
+      "email": "giacomo.sanchietti@nethesis.it"
     }
   ],
   "docs": {
-    "documentation_url": "https://docs.kickstart.com/",
+    "documentation_url": "https://github.com/NethServer/ns8-insights",
     "bug_url": "https://github.com/NethServer/dev",
-    "code_url": "https://github.com/author/ns8-kickstart"
+    "code_url": "https://github.com/NethServer/ns8-insights"
   },
-  "source": "ghcr.io/nethserver/kickstart"
+  "source": "ghcr.io/nethserver/insights"
 }
