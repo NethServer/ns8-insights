@@ -1,0 +1,28 @@
+name: Unit tests
+
+on:
+  push:
+    paths:
+      - "imageroot/bin/insights-collector"
+      - "tests/unit/**"
+      - ".github/workflows/unit-tests.yml"
+  pull_request:
+    paths:
+      - "imageroot/bin/insights-collector"
+      - "tests/unit/**"
+      - ".github/workflows/unit-tests.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  pytest:
+    name: "Collector unit tests"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -r tests/unit/requirements.txt
+      - run: python -m pytest tests/unit
