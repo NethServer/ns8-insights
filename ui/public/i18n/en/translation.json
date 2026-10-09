@@ -1,57 +1,105 @@
 {
-    "common": {
-        "required": "Required",
-        "work_in_progress": "Work in progress",
-        "processing": "Processing..."
-    },
-    "status": {
-        "title": "Status",
-        "app_instance": "App instance",
-        "services": "Service | Services",
-        "app_images": "App image | App images",
-        "app_volumes": "App volume | App volumes",
-        "installation_node": "Installation node",
-        "node": "Node",
-        "name": "Name",
-        "size": "Size",
-        "created": "Created",
-        "mount": "Mount",
-        "no_services": "No services",
-        "no_images": "No images",
-        "no_volumes": "No volumes"
-    },
-    "settings": {
-        "title": "Settings",
-        "configure_instance": "Configure {instance}",
-        "save": "Save",
-        "test_field": "Test field"
-    },
-    "about": {
-        "title": "About"
-    },
-    "task": {
-        "cannot_create_task": "Cannot create task {action}"
-    },
-    "action": {
-        "get-status": "Get status",
-        "get-configuration": "Get configuration",
-        "configure-module": "Configure module",
-        "get-module-info": "Get module info",
-        "get-name": "Get name",
-        "list-backup-repositories": "List backup repositories",
-        "list-backups": "List backups",
-        "list-installed-modules": "List installed modules"
-    },
-    "error": {
-        "error": "Error",
-        "generic_error": "Something went wrong",
-        "validation_error": "Validation error",
-        "network_error": "Network error",
-        "network_timeout": "Network timeout",
-        "401": "Invalid authentication",
-        "403": "Operation not authorized",
-        "404": "Resource not found",
-        "cannot_retrieve_module_info": "Cannot retrieve module info",
-        "cannot_retrieve_installed_modules": "Cannot retrieve installed modules"
-    }
+  "common": {
+    "required": "Required",
+    "work_in_progress": "Work in progress",
+    "processing": "Processing..."
+  },
+  "status": {
+    "title": "Status",
+    "app_instance": "App instance",
+    "services": "Service | Services",
+    "app_images": "App image | App images",
+    "app_volumes": "App volume | App volumes",
+    "installation_node": "Installation node",
+    "node": "Node",
+    "name": "Name",
+    "size": "Size",
+    "created": "Created",
+    "mount": "Mount",
+    "no_services": "No services",
+    "no_images": "No images",
+    "no_volumes": "No volumes"
+  },
+  "settings": {
+    "title": "Settings",
+    "configure_instance": "Configure {instance}",
+    "save": "Save",
+    "description": "When enabled, the collector reads the logs of all cluster nodes, removes personal data and sends a summary to the Nethesis insights service every 15 minutes. The service analyzes it and reports problems in the Insights page.",
+    "collector": "Log analysis",
+    "enabled": "Enabled",
+    "disabled": "Disabled",
+    "last_run": "Last data sent",
+    "never": "Never",
+    "advanced": "Advanced",
+    "base_url": "Insights server URL",
+    "base_url_helper": "Root URL of the server, with no path",
+    "verify_tls": "Verify TLS certificate",
+    "invalid_url": "Enter a valid http:// or https:// URL",
+    "subscription_required": "Subscription required",
+    "subscription_required_description": "The insights service accepts data only from machines with an active subscription. Activate a subscription in the cluster Settings to enable this module.",
+    "active_elsewhere": "Already active on another instance",
+    "active_elsewhere_description": "Log analysis is already enabled on {instance}. Only one instance per cluster can be enabled, because each one reads the logs of the whole cluster."
+  },
+  "about": {
+    "title": "About"
+  },
+  "task": {
+    "cannot_create_task": "Cannot create task {action}"
+  },
+  "action": {
+    "get-status": "Get status",
+    "get-configuration": "Get configuration",
+    "configure-module": "Configure module",
+    "get-module-info": "Get module info",
+    "get-name": "Get name",
+    "list-backup-repositories": "List backup repositories",
+    "list-backups": "List backups",
+    "list-installed-modules": "List installed modules",
+    "list-findings": "List findings"
+  },
+  "error": {
+    "error": "Error",
+    "generic_error": "Something went wrong",
+    "validation_error": "Validation error",
+    "network_error": "Network error",
+    "network_timeout": "Network timeout",
+    "401": "Invalid authentication",
+    "403": "Operation not authorized",
+    "404": "Resource not found",
+    "cannot_retrieve_module_info": "Cannot retrieve module info",
+    "cannot_retrieve_installed_modules": "Cannot retrieve installed modules"
+  },
+  "insights": {
+    "title": "Insights",
+    "page_description": "Problems found in the cluster logs by the Nethesis insights service. New kinds of problems are reviewed by Nethesis before they are shown here.",
+    "search": "Search",
+    "status_filter": "Show",
+    "status_open": "Open",
+    "status_stale": "Stale",
+    "status_all": "All",
+    "refresh": "Refresh",
+    "col_severity": "Severity",
+    "col_title": "Title",
+    "col_summary": "Summary",
+    "col_suggested_action": "Suggested action",
+    "col_modules": "Modules",
+    "col_last_seen": "Last seen",
+    "severity_critical": "Critical",
+    "severity_high": "High",
+    "severity_medium": "Medium",
+    "severity_low": "Low",
+    "documentation": "Documentation",
+    "no_findings": "No findings",
+    "no_findings_description": "No problems found in the cluster logs. Findings appear here after the insights service has analyzed the data.",
+    "no_findings_filtered": "No findings found",
+    "no_findings_filtered_description": "Try changing your search",
+    "collector_disabled": "Log analysis is disabled",
+    "collector_disabled_description": "Enable it in the Settings page to send new data to the insights service.",
+    "go_to_settings": "Go to Settings",
+    "subscription_required": "A subscription is required to read the findings",
+    "server_unauthorized": "The insights server rejected the subscription credentials",
+    "server_unreachable": "Cannot reach the insights server",
+    "server_tls_error": "The TLS certificate of the insights server is not valid",
+    "server_error": "The insights server returned an error"
+  }
 }

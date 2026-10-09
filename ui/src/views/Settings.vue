@@ -1,5 +1,5 @@
 <!--
-  Copyright (C) 2023 Nethesis S.r.l.
+  Copyright (C) 2026 Nethesis S.r.l.
   SPDX-License-Identifier: GPL-3.0-or-later
 -->
 <template>
@@ -19,34 +19,101 @@
         />
       </cv-column>
     </cv-row>
+    <cv-row v-if="isConfigLoaded && !subscriptionConfigured">
+      <cv-column>
+        <NsInlineNotification
+          kind="info"
+          :title="$t('settings.subscription_required')"
+          :description="$t('settings.subscription_required_description')"
+          :showCloseButton="false"
+        />
+      </cv-column>
+    </cv-row>
+    <cv-row v-else-if="isConfigLoaded && activeElsewhere">
+      <cv-column>
+        <NsInlineNotification
+          kind="warning"
+          :title="$t('settings.active_elsewhere')"
+          :description="
+            $t('settings.active_elsewhere_description', {
+              instance: activeElsewhere,
+            })
+          "
+          :showCloseButton="false"
+        />
+      </cv-column>
+    </cv-row>
     <cv-row>
       <cv-column>
         <cv-tile light>
-          <cv-form @submit.prevent="configureModule">
-            <!-- TODO remove test field and code configuration fields -->
-            <cv-text-input
-              :label="$t('settings.test_field')"
-              v-model="testField"
-              :placeholder="$t('settings.test_field')"
-              :disabled="loading.getConfiguration || loading.configureModule"
-              :invalid-message="error.testField"
-              ref="testField"
-            ></cv-text-input>
-            <cv-row v-if="error.configureModule">
-              <cv-column>
-                <NsInlineNotification
-                  kind="error"
-                  :title="$t('action.configure-module')"
-                  :description="error.configureModule"
-                  :showCloseButton="false"
-                />
-              </cv-column>
-            </cv-row>
+          <cv-skeleton-text
+            v-if="loading.getConfiguration"
+            :paragraph="true"
+            :line-count="5"
+          ></cv-skeleton-text>
+          <cv-form v-else @submit.prevent="configureModule">
+            <p class="mg-bottom">{{ $t("settings.description") }}</p>
+            <NsToggle
+              value="enabled"
+              :label="$t('settings.collector')"
+              v-model="enabled"
+              :disabled="isFormDisabled || !!activeElsewhere"
+              :invalid-message="error.enabled"
+              ref="enabled"
+            >
+              <template slot="text-left">{{
+                $t("settings.disabled")
+              }}</template>
+              <template slot="text-right">{{
+                $t("settings.enabled")
+              }}</template>
+            </NsToggle>
+            <div v-if="enabled" class="mg-bottom">
+              <span class="label">{{ $t("settings.last_run") }}</span>
+              <span v-if="lastRun">{{ formatLastRun(lastRun) }}</span>
+              <span v-else>{{ $t("settings.never") }}</span>
+            </div>
+            <cv-accordion ref="accordion" class="maxwidth mg-bottom">
+              <cv-accordion-item :open="toggleAccordion[0]">
+                <template slot="title">{{ $t("settings.advanced") }}</template>
+                <template slot="content">
+                  <NsTextInput
+                    :label="$t('settings.base_url')"
+                    v-model.trim="baseUrl"
+                    :helper-text="$t('settings.base_url_helper')"
+                    :invalid-message="error.base_url"
+                    :disabled="isFormDisabled"
+                    ref="base_url"
+                  />
+                  <NsToggle
+                    value="verifyTls"
+                    :label="$t('settings.verify_tls')"
+                    v-model="verifyTls"
+                    :disabled="isFormDisabled"
+                    ref="verify_tls"
+                  >
+                    <template slot="text-left">{{
+                      $t("settings.disabled")
+                    }}</template>
+                    <template slot="text-right">{{
+                      $t("settings.enabled")
+                    }}</template>
+                  </NsToggle>
+                </template>
+              </cv-accordion-item>
+            </cv-accordion>
+            <NsInlineNotification
+              v-if="error.configureModule"
+              kind="error"
+              :title="$t('action.configure-module')"
+              :description="error.configureModule"
+              :showCloseButton="false"
+            />
             <NsButton
               kind="primary"
               :icon="Save20"
               :loading="loading.configureModule"
-              :disabled="loading.getConfiguration || loading.configureModule"
+              :disabled="isFormDisabled"
               >{{ $t("settings.save") }}</NsButton
             >
           </cv-form>
@@ -67,6 +134,8 @@ import {
   PageTitleService,
 } from "@nethserver/ns8-ui-lib";
 
+const DEFAULT_SERVER_URL = "https://insights.nethesis.it";
+
 export default {
   name: "Settings",
   mixins: [
@@ -85,7 +154,14 @@ export default {
         page: "settings",
       },
       urlCheckInterval: null,
-      testField: "", // TODO remove
+      isConfigLoaded: false,
+      enabled: false,
+      baseUrl: DEFAULT_SERVER_URL,
+      verifyTls: true,
+      subscriptionConfigured: false,
+      activeElsewhere: "",
+      lastRun: "",
+      toggleAccordion: [false],
       loading: {
         getConfiguration: false,
         configureModule: false,
@@ -93,13 +169,21 @@ export default {
       error: {
         getConfiguration: "",
         configureModule: "",
-        testField: "", // TODO remove
-        // TODO add all validation error fields
+        enabled: "",
+        base_url: "",
       },
     };
   },
   computed: {
     ...mapState(["instanceName", "core", "appName"]),
+    isFormDisabled() {
+      // The insights server accepts data only from subscribed machines
+      return (
+        this.loading.getConfiguration ||
+        this.loading.configureModule ||
+        !this.subscriptionConfigured
+      );
+    },
   },
   beforeRouteEnter(to, from, next) {
     next((vm) => {
@@ -115,6 +199,10 @@ export default {
     this.getConfiguration();
   },
   methods: {
+    formatLastRun(value) {
+      const date = new Date(value);
+      return isNaN(date) ? value : date.toLocaleString(this.$i18n.locale);
+    },
     async getConfiguration() {
       this.loading.getConfiguration = true;
       this.error.getConfiguration = "";
@@ -158,59 +246,60 @@ export default {
       this.loading.getConfiguration = false;
     },
     getConfigurationCompleted(taskContext, taskResult) {
-      this.loading.getConfiguration = false;
       const config = taskResult.output;
-
-      // TODO set configuration fields
-      // ...
-
-      // TODO remove
-      console.log("config", config);
-
-      // TODO focus first configuration field
-      this.focusElement("testField");
+      this.enabled = config.enabled;
+      this.baseUrl = config.base_url;
+      this.verifyTls = config.verify_tls;
+      this.subscriptionConfigured = config.subscription_configured;
+      this.activeElsewhere = config.active_elsewhere;
+      this.lastRun = config.last_run;
+      // open the advanced section when it differs from the defaults
+      this.toggleAccordion = [
+        this.baseUrl !== DEFAULT_SERVER_URL || !this.verifyTls,
+      ];
+      this.isConfigLoaded = true;
+      this.loading.getConfiguration = false;
     },
     validateConfigureModule() {
       this.clearErrors(this);
-      let isValidationOk = true;
 
-      // TODO remove testField and validate configuration fields
-      if (!this.testField) {
-        // test field cannot be empty
-        this.error.testField = this.$t("common.required");
-
-        if (isValidationOk) {
-          this.focusElement("testField");
-          isValidationOk = false;
-        }
+      if (!/^https?:\/\/\S+$/.test(this.baseUrl)) {
+        this.error.base_url = this.$t("settings.invalid_url");
+        this.toggleAccordion = [true];
+        this.focusElement("base_url");
+        return false;
       }
-      return isValidationOk;
+      return true;
     },
     configureModuleValidationFailed(validationErrors) {
       this.loading.configureModule = false;
       let focusAlreadySet = false;
 
       for (const validationError of validationErrors) {
-        const field = validationError.field;
+        const param = validationError.parameter;
 
-        if (field !== "(root)") {
+        if (validationError.error === "active_elsewhere") {
+          this.error[param] = this.$t("settings.active_elsewhere_description", {
+            instance: validationError.value,
+          });
+        } else {
           // set i18n error message
-          this.error[field] = this.$t("settings." + validationError.error);
+          this.error[param] = this.$t("settings." + validationError.error);
+        }
 
-          if (!focusAlreadySet) {
-            this.focusElement(field);
-            focusAlreadySet = true;
-          }
+        if (!focusAlreadySet) {
+          this.focusElement(param);
+          focusAlreadySet = true;
         }
       }
     },
     async configureModule() {
-      const isValidationOk = this.validateConfigureModule();
-      if (!isValidationOk) {
+      if (!this.validateConfigureModule()) {
         return;
       }
 
       this.loading.configureModule = true;
+      this.error.configureModule = "";
       const taskAction = "configure-module";
       const eventId = this.getUuid();
 
@@ -236,7 +325,9 @@ export default {
         this.createModuleTaskForApp(this.instanceName, {
           action: taskAction,
           data: {
-            // TODO configuration fields
+            enabled: this.enabled,
+            base_url: this.baseUrl,
+            verify_tls: this.verifyTls,
           },
           extra: {
             title: this.$t("settings.configure_instance", {
@@ -273,4 +364,13 @@ export default {
 
 <style scoped lang="scss">
 @import "../styles/carbon-utils";
+
+.maxwidth {
+  max-width: 38rem;
+}
+
+.label {
+  font-weight: bold;
+  margin-right: $spacing-03;
+}
 </style>
