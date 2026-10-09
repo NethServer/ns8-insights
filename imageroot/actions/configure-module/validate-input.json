@@ -27,11 +27,11 @@
             "type": "string",
             "format": "uri",
             "pattern": "^https?://",
-            "description": "Root URL of the insights server, with no path. Default https://insights.nethesis.it"
+            "description": "Root URL of the insights server, with no path. If omitted, the current value is kept (initially https://insights.nethesis.it)"
         },
         "verify_tls": {
             "type": "boolean",
-            "description": "Verify the TLS certificate of the insights server. Default true"
+            "description": "Verify the TLS certificate of the insights server. If omitted, the current value is kept (initially true)"
         }
     }
 }

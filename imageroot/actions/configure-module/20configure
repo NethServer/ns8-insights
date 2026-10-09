@@ -6,6 +6,7 @@
 #
 
 import json
+import os
 import sys
 
 import agent
@@ -14,8 +15,9 @@ import insights
 request = json.load(sys.stdin)
 
 enabled = request['enabled']
-base_url = request.get('base_url') or insights.DEFAULT_SERVER_URL
-verify_tls = request.get('verify_tls', True)
+# Omitted fields keep their current value
+base_url = request.get('base_url') or os.getenv('INSIGHTS_SERVER_URL', insights.DEFAULT_SERVER_URL)
+verify_tls = request.get('verify_tls', os.getenv('INSIGHTS_VERIFY_TLS', '1') != '0')
 
 if enabled:
     rdb = agent.redis_connect(use_replica=True)
