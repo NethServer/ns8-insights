@@ -8,7 +8,7 @@
             "status": "open"
         }
     ],
-    "type": "object",
+    "type": ["object", "null"],
     "additionalProperties": false,
     "properties": {
         "status": {

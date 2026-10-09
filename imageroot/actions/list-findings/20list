@@ -25,7 +25,8 @@ import insights
 
 TIMEOUT_SECONDS = 30
 
-request = json.load(sys.stdin)
+# api-cli sends null when called without --data
+request = json.load(sys.stdin) or {}
 status = request.get('status', 'open')
 
 
