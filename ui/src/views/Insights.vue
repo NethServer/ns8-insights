@@ -129,39 +129,42 @@
                     :label="$t('insights.severity_' + row.severity)"
                   />
                 </cv-data-table-cell>
-                <cv-data-table-cell class="title-cell">
-                  <div class="finding-title">{{ row.title }}</div>
-                  <NsTag
-                    v-if="row.security"
-                    kind="purple"
-                    size="sm"
-                    :label="$t('insights.security')"
-                  />
-                  <NsTag
-                    v-if="row.status === 'stale'"
-                    kind="gray"
-                    size="sm"
-                    :label="$t('insights.status_stale')"
-                  />
-                </cv-data-table-cell>
-                <cv-data-table-cell class="text-cell">
-                  {{ row.summary }}
-                </cv-data-table-cell>
-                <cv-data-table-cell class="text-cell">
-                  {{ row.suggested_action }}
-                  <div v-if="row.doc_ref">
-                    <cv-link :href="row.doc_ref" target="_blank" rel="noopener">
-                      {{ $t("insights.documentation") }}
-                    </cv-link>
+                <cv-data-table-cell class="finding-cell">
+                  <div class="finding-title">
+                    {{ row.title }}
+                    <NsTag
+                      v-if="row.security"
+                      kind="purple"
+                      size="sm"
+                      :label="$t('insights.security')"
+                    />
+                    <NsTag
+                      v-if="row.status === 'stale'"
+                      kind="gray"
+                      size="sm"
+                      :label="$t('insights.status_stale')"
+                    />
+                  </div>
+                  <div class="finding-summary" :title="row.summary">
+                    {{ row.summary }}
                   </div>
                 </cv-data-table-cell>
-                <cv-data-table-cell>
-                  {{ formatModules(row) }}
+                <cv-data-table-cell
+                  class="list-cell"
+                  :title="moduleNames(row).join(', ')"
+                >
+                  {{ formatShortList(moduleNames(row)) }}
+                </cv-data-table-cell>
+                <cv-data-table-cell
+                  class="list-cell"
+                  :title="nodeNames(row).join(', ')"
+                >
+                  {{ formatShortList(shortNodeNames(row)) }}
                 </cv-data-table-cell>
                 <cv-data-table-cell>
-                  {{ formatNodes(row) }}
+                  {{ row.occurrence_count || 1 }}
                 </cv-data-table-cell>
-                <cv-data-table-cell>
+                <cv-data-table-cell class="list-cell">
                   <span :title="formatDateTime(row.last_seen)">
                     {{
                       formatDateDistance(row.last_seen, new Date(), {
@@ -172,6 +175,38 @@
                 </cv-data-table-cell>
                 <template slot="expandedContent">
                   <div class="finding-details">
+                    <div class="details-label">
+                      {{ $t("insights.suggested_action") }}
+                    </div>
+                    <div class="details-text">
+                      {{ row.suggested_action }}
+                      <cv-link
+                        v-if="row.doc_ref"
+                        :href="row.doc_ref"
+                        target="_blank"
+                        rel="noopener"
+                      >
+                        {{ $t("insights.documentation") }}
+                      </cv-link>
+                    </div>
+                    <div class="details-label">
+                      {{ $t("insights.summary") }}
+                    </div>
+                    <div class="details-text">{{ row.summary }}</div>
+                    <div class="details-grid">
+                      <div>
+                        <div class="details-label">
+                          {{ $t("insights.modules") }}
+                        </div>
+                        <div>{{ formatModules(row) }}</div>
+                      </div>
+                      <div>
+                        <div class="details-label">
+                          {{ $t("insights.nodes") }}
+                        </div>
+                        <div>{{ formatNodes(row) }}</div>
+                      </div>
+                    </div>
                     <div class="details-grid">
                       <div>
                         <div class="details-label">
@@ -190,12 +225,6 @@
                           {{ $t("insights.reopened_at") }}
                         </div>
                         <div>{{ formatDateTime(row.reopened_at) }}</div>
-                      </div>
-                      <div>
-                        <div class="details-label">
-                          {{ $t("insights.occurrence_count") }}
-                        </div>
-                        <div>{{ row.occurrence_count || 1 }}</div>
                       </div>
                     </div>
                     <div class="details-label">
@@ -265,10 +294,9 @@ export default {
       tableColumns: [
         "severity",
         "title",
-        "summary",
-        "suggested_action",
         "modules",
         "nodes",
+        "occurrence_count",
         "last_seen",
       ],
       loading: {
@@ -332,12 +360,30 @@ export default {
           return "blue";
       }
     },
-    formatModules(finding) {
+    moduleNames(finding) {
       // an empty module name means the host itself, e.g. sshd
-      const modules = (finding.modules || []).map(
+      return (finding.modules || []).map(
         (module) => module || this.$t("insights.host")
       );
-      return modules.join(", ") || "-";
+    },
+    formatModules(finding) {
+      return this.moduleNames(finding).join(", ") || "-";
+    },
+    shortNodeNames(finding) {
+      // the cluster nodes usually share the domain: keep the host part
+      return this.nodeNames(finding).map((name) => name.split(".")[0]);
+    },
+    formatShortList(names) {
+      // long lists stretch the table: the full one is in the row details
+      const max = 2;
+      if (names.length <= max) {
+        return names.join(", ") || "-";
+      }
+      return (
+        names.slice(0, max).join(", ") +
+        " " +
+        this.$t("insights.more_items", { count: names.length - max })
+      );
     },
     nodeNames(finding) {
       if (finding.node_refs && finding.node_refs.length) {
@@ -497,13 +543,37 @@ export default {
   min-width: 10rem;
 }
 
+.finding-cell {
+  min-width: 20rem;
+  max-width: 48rem;
+  padding-top: $spacing-03;
+  padding-bottom: $spacing-03;
+}
+
 .finding-title {
   font-weight: bold;
 }
 
-.text-cell {
-  max-width: 28rem;
-  white-space: normal;
+.finding-title ::v-deep .bx--tag {
+  margin-top: 0;
+  margin-bottom: 0;
+}
+
+.finding-summary {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  margin-top: $spacing-02;
+}
+
+.list-cell {
+  white-space: nowrap;
+}
+
+.details-text {
+  max-width: 48rem;
+  margin-bottom: $spacing-05;
 }
 
 .finding-details {
