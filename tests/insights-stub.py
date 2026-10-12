@@ -35,8 +35,6 @@ FINDINGS = [
         "occurrence_count": 1,
         "first_seen": 1754380811000,
         "last_seen": 1754381690000,
-        "llm_model": "stub",
-        "prompt_version": "v1",
         "security": False,
     },
     {
@@ -53,8 +51,6 @@ FINDINGS = [
         "occurrence_count": 3,
         "first_seen": 1754000000000,
         "last_seen": 1754100000000,
-        "llm_model": "stub",
-        "prompt_version": "v1",
         "security": False,
     },
 ]

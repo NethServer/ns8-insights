@@ -20,8 +20,6 @@
                     "occurrence_count": 1,
                     "first_seen": 1754380811000,
                     "last_seen": 1754381690000,
-                    "llm_model": "model",
-                    "prompt_version": "v1",
                     "node_refs": [{"node_id": 1, "fqdn": "node1.example.com"}],
                     "security": false
                 }
