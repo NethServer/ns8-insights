@@ -24,29 +24,25 @@
         />
       </cv-column>
     </cv-row>
-    <cv-row v-if="isConfigLoaded && !subscriptionConfigured">
+    <cv-row v-if="isConfigLoaded && !enabled">
       <cv-column>
-        <NsInlineNotification
-          kind="info"
-          :title="$t('settings.subscription_required')"
-          :description="$t('settings.subscription_required_description')"
-          :showCloseButton="false"
-        />
+        <cv-tile light>
+          <NsEmptyState :title="$t('insights.collector_disabled')">
+            <template #description>
+              <div>{{ $t("insights.collector_disabled_description") }}</div>
+              <NsButton
+                kind="primary"
+                :icon="Settings20"
+                class="mg-top-lg"
+                @click="goToAppPage(instanceName, 'settings')"
+                >{{ $t("insights.go_to_settings") }}
+              </NsButton>
+            </template>
+          </NsEmptyState>
+        </cv-tile>
       </cv-column>
     </cv-row>
-    <cv-row v-else-if="isConfigLoaded && !enabled">
-      <cv-column>
-        <NsInlineNotification
-          kind="info"
-          :title="$t('insights.collector_disabled')"
-          :description="$t('insights.collector_disabled_description')"
-          :actionLabel="$t('insights.go_to_settings')"
-          @action="goToAppPage(instanceName, 'settings')"
-          :showCloseButton="false"
-        />
-      </cv-column>
-    </cv-row>
-    <cv-row v-if="!isConfigLoaded || subscriptionConfigured">
+    <cv-row v-else-if="!error.getConfiguration">
       <cv-column>
         <cv-tile light>
           <div class="toolbar">
@@ -91,7 +87,7 @@
             :noSearchResultsDescription="
               core.$t('common.no_search_results_description')
             "
-            :isLoading="loading.listFindings"
+            :isLoading="loading.getConfiguration || loading.listFindings"
             :skeletonRows="5"
             :isErrorShown="!!error.listFindings"
             :errorTitle="$t('action.list-findings')"
@@ -136,6 +132,12 @@
                 <cv-data-table-cell class="title-cell">
                   <div class="finding-title">{{ row.title }}</div>
                   <NsTag
+                    v-if="row.security"
+                    kind="purple"
+                    size="sm"
+                    :label="$t('insights.security')"
+                  />
+                  <NsTag
                     v-if="row.status === 'stale'"
                     kind="gray"
                     size="sm"
@@ -154,7 +156,10 @@
                   </div>
                 </cv-data-table-cell>
                 <cv-data-table-cell>
-                  {{ (row.modules || []).join(", ") || "-" }}
+                  {{ formatModules(row) }}
+                </cv-data-table-cell>
+                <cv-data-table-cell>
+                  {{ formatNodes(row) }}
                 </cv-data-table-cell>
                 <cv-data-table-cell>
                   <span :title="formatDateTime(row.last_seen)">
@@ -165,6 +170,45 @@
                     }}
                   </span>
                 </cv-data-table-cell>
+                <template slot="expandedContent">
+                  <div class="finding-details">
+                    <div class="details-grid">
+                      <div>
+                        <div class="details-label">
+                          {{ $t("insights.first_seen") }}
+                        </div>
+                        <div>{{ formatDateTime(row.first_seen) }}</div>
+                      </div>
+                      <div>
+                        <div class="details-label">
+                          {{ $t("insights.last_seen") }}
+                        </div>
+                        <div>{{ formatDateTime(row.last_seen) }}</div>
+                      </div>
+                      <div v-if="row.reopened_at">
+                        <div class="details-label">
+                          {{ $t("insights.reopened_at") }}
+                        </div>
+                        <div>{{ formatDateTime(row.reopened_at) }}</div>
+                      </div>
+                      <div>
+                        <div class="details-label">
+                          {{ $t("insights.occurrence_count") }}
+                        </div>
+                        <div>{{ row.occurrence_count || 1 }}</div>
+                      </div>
+                    </div>
+                    <div class="details-label">
+                      {{ $t("insights.evidence") }}
+                    </div>
+                    <pre
+                      v-if="row.evidence && row.evidence.length"
+                      class="evidence"
+                      >{{ row.evidence.join("\n") }}</pre
+                    >
+                    <div v-else>{{ $t("insights.no_evidence") }}</div>
+                  </div>
+                </template>
               </cv-data-table-row>
             </template>
           </NsDataTable>
@@ -186,6 +230,7 @@ import {
   PageTitleService,
 } from "@nethserver/ns8-ui-lib";
 import Restart20 from "@carbon/icons-vue/es/restart/20";
+import Settings20 from "@carbon/icons-vue/es/settings/20";
 
 const SEVERITY_ORDER = { critical: 0, high: 1, medium: 2, low: 3 };
 
@@ -208,10 +253,10 @@ export default {
         page: "insights",
       },
       Restart20,
+      Settings20,
       urlCheckInterval: null,
       isConfigLoaded: false,
       enabled: false,
-      subscriptionConfigured: false,
       findings: [],
       searchFilter: "",
       statusFilter: "open",
@@ -223,6 +268,7 @@ export default {
         "summary",
         "suggested_action",
         "modules",
+        "nodes",
         "last_seen",
       ],
       loading: {
@@ -286,14 +332,36 @@ export default {
           return "blue";
       }
     },
+    formatModules(finding) {
+      // an empty module name means the host itself, e.g. sshd
+      const modules = (finding.modules || []).map(
+        (module) => module || this.$t("insights.host")
+      );
+      return modules.join(", ") || "-";
+    },
+    nodeNames(finding) {
+      if (finding.node_refs && finding.node_refs.length) {
+        return finding.node_refs.map(
+          (node) =>
+            node.fqdn || this.$t("insights.node_n", { id: node.node_id })
+        );
+      }
+      return (finding.nodes || []).map((id) =>
+        this.$t("insights.node_n", { id })
+      );
+    },
+    formatNodes(finding) {
+      return this.nodeNames(finding).join(", ") || "-";
+    },
     findingSearchText(finding) {
       return [
         this.$t("insights.severity_" + finding.severity),
         finding.title,
         finding.summary,
         finding.suggested_action,
-        ...(finding.modules || []),
-        ...(finding.node_refs || []).map((node) => node.fqdn),
+        finding.security ? this.$t("insights.security") : "",
+        this.formatModules(finding),
+        ...this.nodeNames(finding),
       ]
         .filter(Boolean)
         .join(" ")
@@ -340,12 +408,11 @@ export default {
     getConfigurationCompleted(taskContext, taskResult) {
       const config = taskResult.output;
       this.enabled = config.enabled;
-      this.subscriptionConfigured = config.subscription_configured;
       this.isConfigLoaded = true;
       this.loading.getConfiguration = false;
 
       // findings stay readable after the collector is disabled
-      if (this.subscriptionConfigured) {
+      if (this.enabled) {
         this.listFindings();
       }
     },
@@ -437,5 +504,31 @@ export default {
 .text-cell {
   max-width: 28rem;
   white-space: normal;
+}
+
+.finding-details {
+  padding: $spacing-03 0 $spacing-05;
+}
+
+.details-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: $spacing-05 $spacing-07;
+  margin-bottom: $spacing-05;
+}
+
+.details-label {
+  font-weight: bold;
+  margin-bottom: $spacing-02;
+}
+
+.evidence {
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.75rem;
+  white-space: pre;
+  overflow-x: auto;
+  max-width: 100%;
+  padding: $spacing-03;
+  background-color: rgba(128, 128, 128, 0.12);
 }
 </style>
