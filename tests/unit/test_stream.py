@@ -230,20 +230,20 @@ def test_cursor_missing_file_is_the_normal_first_start(collector, tmp_path,
 
 @pytest.mark.parametrize("content", ["", "not-a-number", "12.5\n34"])
 def test_cursor_garbage_is_reported_and_ignored(collector, tmp_path,
-                                                monkeypatch, capsys, content):
+                                                monkeypatch, caplog, content):
     """A bad cursor must cost the gap it describes, never the daemon."""
     monkeypatch.chdir(tmp_path)
     (tmp_path / collector.STREAM_CURSOR_FILE).write_text(content)
     assert collector.read_cursor() is None
-    assert collector.STREAM_CURSOR_FILE in capsys.readouterr().err
+    assert collector.STREAM_CURSOR_FILE in caplog.text
 
 
 def test_write_cursor_survives_an_unwritable_directory(collector, tmp_path,
-                                                       monkeypatch, capsys):
+                                                       monkeypatch, caplog):
     monkeypatch.chdir(tmp_path)
     (tmp_path / collector.STREAM_CURSOR_FILE).mkdir()
     collector.write_cursor(42)  # must not raise
-    assert "could not write" in capsys.readouterr().err
+    assert "could not write" in caplog.text
 
 
 def test_ns_and_ns_to_datetime_round_trip(collector):

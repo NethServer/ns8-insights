@@ -18,6 +18,7 @@ import collections
 import datetime
 import gzip
 import json
+import logging
 import os
 import random
 import re
@@ -1397,6 +1398,81 @@ def is_enabled(environ):
     return environ.get("INSIGHTS_ENABLED", "0") == "1"
 
 
+# --------------------------------------------------------------------------
+# Logging.
+# --------------------------------------------------------------------------
+
+log = logging.getLogger("insights-collector")
+
+LOG_LEVELS = ("debug", "info", "warning", "error")
+DEFAULT_LOG_LEVEL = "warning"
+
+# sd-daemon(3) prefixes: journald strips them and stores the priority, so
+# `journalctl -p warning` works on the collector's lines too.
+SYSLOG_PRIORITIES = {
+    logging.DEBUG: 7,
+    logging.INFO: 6,
+    logging.WARNING: 4,
+    logging.ERROR: 3,
+    logging.CRITICAL: 2,
+}
+
+
+class JournalFormatter(logging.Formatter):
+    def format(self, record):
+        return "<{0}>{1}".format(SYSLOG_PRIORITIES.get(record.levelno, 6),
+                                 super().format(record))
+
+
+def log_level(environ):
+    """(level name, is valid) from INSIGHTS_LOG_LEVEL; warning by default."""
+    name = environ.get("INSIGHTS_LOG_LEVEL", "").strip().lower()
+    if not name:
+        return DEFAULT_LOG_LEVEL, True
+    if name not in LOG_LEVELS:
+        return DEFAULT_LOG_LEVEL, False
+    return name, True
+
+
+def stderr_is_journal(environ):
+    """True when stderr is the journal stream systemd connected.
+
+    systemd sets JOURNAL_STREAM to the device:inode of that stream.
+    Comparing it with stderr's own tells a service run from a manual run
+    started from inside one, whose stderr is a terminal.
+    """
+    stream = environ.get("JOURNAL_STREAM")
+    if not stream:
+        return False
+    try:
+        info = os.fstat(sys.stderr.fileno())
+    except (OSError, ValueError, AttributeError):
+        return False
+    return stream == "{0}:{1}".format(info.st_dev, info.st_ino)
+
+
+def setup_logging(environ):
+    """Send log records to stderr at the level INSIGHTS_LOG_LEVEL asks for.
+
+    stderr, never stdout: --print owns stdout, and stdout on a pipe is
+    block-buffered, so under systemd its lines reached the journal only
+    when the process stopped. StreamHandler flushes every record.
+    """
+    name, valid = log_level(environ)
+    handler = logging.StreamHandler(sys.stderr)
+    if stderr_is_journal(environ):
+        handler.setFormatter(JournalFormatter("%(message)s"))
+    else:
+        handler.setFormatter(logging.Formatter("%(levelname)s %(message)s"))
+    log.handlers[:] = [handler]
+    log.propagate = False
+    log.setLevel(name.upper())
+    if not valid:
+        log.warning("INSIGHTS_LOG_LEVEL=%s is not one of %s; using %s",
+                    environ.get("INSIGHTS_LOG_LEVEL"), ", ".join(LOG_LEVELS),
+                    DEFAULT_LOG_LEVEL)
+
+
 def read_cluster_nodes():
     """[(node_id, vpn_ip), ...] for the cluster, from Redis.
 
@@ -1488,7 +1564,7 @@ class RosterCache:
         try:
             roster = self._builder(self._reader())
         except Exception as exc:
-            print("roster lookup failed: {0}".format(exc), file=sys.stderr)
+            log.warning("roster lookup failed: %s", exc)
             return self._roster
         self._fetched_at = now
         if roster:
@@ -1543,8 +1619,8 @@ def read_identity():
     secret = fields.get(SUBSCRIPTION_SECRET_FIELD) or None
 
     if not system_id or not secret:
-        print("cluster/subscription is missing required fields; present: {0}".format(
-            sorted(fields.keys())), file=sys.stderr)
+        log.error("cluster/subscription is missing required fields; "
+                  "present: %s", sorted(fields.keys()))
         return None, None
 
     return system_id, secret
@@ -1582,8 +1658,8 @@ def read_cursor():
     except FileNotFoundError:
         return None
     except (OSError, ValueError) as exc:
-        print("{0} unusable ({1}); tailing from now".format(
-            STREAM_CURSOR_FILE, exc), file=sys.stderr)
+        log.warning("%s unusable (%s); tailing from now",
+                    STREAM_CURSOR_FILE, exc)
         return None
 
 
@@ -1592,8 +1668,7 @@ def write_cursor(value):
         with open(STREAM_CURSOR_FILE, "w") as cursor_file:
             cursor_file.write(str(int(value)))
     except OSError as exc:
-        print("could not write {0}: {1}".format(STREAM_CURSOR_FILE, exc),
-              file=sys.stderr)
+        log.warning("could not write %s: %s", STREAM_CURSOR_FILE, exc)
 
 
 def drain_range(client, store, since_ns, until_ns, self_identifier,
@@ -1759,7 +1834,7 @@ def mark_last_run():
             last_run_file.write(
                 datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"))
     except OSError as exc:
-        print("could not write {0}: {1}".format(LAST_RUN_FILE, exc), file=sys.stderr)
+        log.warning("could not write %s: %s", LAST_RUN_FILE, exc)
 
 
 def is_quiet(payload):
@@ -1779,8 +1854,8 @@ def is_quiet(payload):
 def ship_bundle(payload, system_id, secret, url, verify):
     """POST one assembled bundle, or explain why it did not go."""
     if is_quiet(payload):
-        print("window {0}-{1}: quiet, suppressed".format(
-            payload["window"]["start"], payload["window"]["end"]))
+        log.info("window %s-%s: quiet, suppressed",
+                 payload["window"]["start"], payload["window"]["end"])
         # Still record the run: get-configuration reads LAST_RUN_FILE to
         # report collector health, and skipping this write on a suppressed
         # window would make a healthy quiet node look stalled instead of
@@ -1788,25 +1863,27 @@ def ship_bundle(payload, system_id, secret, url, verify):
         mark_last_run()
         return True
 
+    log.debug("shipping window %s-%s: %d templates to %s",
+              payload["window"]["start"], payload["window"]["end"],
+              len(payload["templates"]), url)
     try:
         status, text = ship(payload, url, system_id, secret, verify=verify)
     except urllib.error.HTTPError as exc:
-        print("ship failed {0}: {1}".format(exc.code,
-              exc.read().decode()[:300]), file=sys.stderr)
+        log.error("ship failed %s: %s", exc.code, exc.read().decode()[:300])
         return False
     except urllib.error.URLError as exc:
-        print("ship failed: {0}".format(exc.reason), file=sys.stderr)
+        log.error("ship failed: %s", exc.reason)
         return False
     except TimeoutError:
         # A hang after the request is fully sent surfaces here, not as
         # URLError: urllib only wraps send-phase failures, not response-read
         # timeouts on an already-open connection.
-        print("ship failed: timed out waiting for a response", file=sys.stderr)
+        log.error("ship failed: timed out waiting for a response")
         return False
 
-    print("shipped {0} templates, {1} lines -> {2} {3}".format(
-        len(payload["templates"]), payload["budget"]["lines_kept"], status,
-        text.strip()))
+    log.info("shipped %d templates, %d lines -> %s %s",
+             len(payload["templates"]), payload["budget"]["lines_kept"],
+             status, text.strip())
     mark_last_run()
     return True
 
@@ -1823,7 +1900,7 @@ def flush_and_ship(store, window, max_lines, url, verify, roster=None):
     payload = flush(store, window, max_lines, system_id or "unknown",
                     roster=roster.get(time.time()) if roster else None)
     if not system_id:
-        print("no subscription found; cannot ship bundles", file=sys.stderr)
+        log.error("no subscription found; cannot ship bundles")
         return False
     return ship_bundle(payload, system_id, secret, url, verify)
 
@@ -1838,7 +1915,7 @@ def collect_and_ship(client, window, max_lines, module_id, url, verify,
     """
     system_id, secret = read_identity()
     if not system_id:
-        print("no subscription found; cannot ship bundles", file=sys.stderr)
+        log.error("no subscription found; cannot ship bundles")
         return False
 
     try:
@@ -1847,7 +1924,7 @@ def collect_and_ship(client, window, max_lines, module_id, url, verify,
                                  system_id,
                                  roster=(roster or RosterCache()).get(time.time()))
     except LokiError as exc:
-        print("collection failed: {0}".format(exc), file=sys.stderr)
+        log.error("collection failed: %s", exc)
         return False
     return ship_bundle(payload, system_id, secret, url, verify)
 
@@ -1893,13 +1970,16 @@ def run_daemon(client, minutes, max_lines, module_id, url, verify):
     if cursor_ns is None:
         cursor_ns = ns(now)
     elif cursor_ns < ns(now - lag):
-        print("cursor is {0:.0f} minutes behind; skipping forward".format(
-            (ns(now) - cursor_ns) / 6e10), file=sys.stderr)
+        log.warning("cursor is %.0f minutes behind; skipping forward",
+                    (ns(now) - cursor_ns) / 6e10)
         cursor_ns = ns(now - lag)
 
     window_start = ns_to_datetime(cursor_ns)
     boundary = compute_window(now, minutes)[1] + datetime.timedelta(
         minutes=minutes)
+    log.debug("collector %s started: %d-minute windows, server %s, "
+              "verify TLS %s, tailing from %s", COLLECTOR_VERSION, minutes,
+              url, verify, window_start.isoformat())
     # Mirrors the old timer's RandomizedDelaySec, moved from the poll to the
     # ship: the tail has to keep up with the log regardless, but 2700 nodes
     # must not POST /logs/v1/bundles on the same second. Re-rolled per window.
@@ -1917,8 +1997,8 @@ def run_daemon(client, minutes, max_lines, module_id, url, verify):
             # Loki was unreachable long enough that replaying the gap would
             # mean hundreds of windows of catch-up, each with its own
             # POST. Abandon the gap and resync instead.
-            print("{0:.0f} minutes behind; abandoning the gap".format(
-                (now - boundary).total_seconds() / 60), file=sys.stderr)
+            log.warning("%.0f minutes behind; abandoning the gap",
+                        (now - boundary).total_seconds() / 60)
             store.drain()
             cursor_ns = ns(now - lag)
             window_start = ns_to_datetime(cursor_ns)
@@ -1932,14 +2012,18 @@ def run_daemon(client, minutes, max_lines, module_id, url, verify):
             until_ns = min(time.time_ns() - READ_LAG_SECONDS * 1000000000,
                            ns(boundary))
             if until_ns > cursor_ns:
+                seen = store.lines_seen
                 cursor_ns = drain_range(client, store, cursor_ns, until_ns,
                                         self_identifier, stop)
                 write_cursor(cursor_ns)
+                log.debug("tailed %d lines up to %s",
+                          store.lines_seen - seen,
+                          ns_to_datetime(cursor_ns).isoformat())
         except LokiError as exc:
             # The cursor stays where it was, so the next tick re-reads the
             # same range: a transient Loki restart costs a duplicate count,
             # not a hole in the window.
-            print("tail failed: {0}".format(exc), file=sys.stderr)
+            log.warning("tail failed: %s", exc)
 
         if stop["flag"]:
             break
@@ -1952,6 +2036,8 @@ def run_daemon(client, minutes, max_lines, module_id, url, verify):
             window_start = boundary
             boundary += datetime.timedelta(minutes=minutes)
             jitter = random.uniform(0, max_jitter)
+            log.debug("next window ends %s, ships %.0fs later",
+                      boundary.isoformat(), jitter)
             if stop["flag"]:
                 break
 
@@ -1963,6 +2049,7 @@ def run_daemon(client, minutes, max_lines, module_id, url, verify):
     # persisted cursor exists to prevent. Replaying costs a duplicate read;
     # not replaying costs the lines.
     write_cursor(ns(window_start))
+    log.debug("stopped; cursor rewound to %s", window_start.isoformat())
     return 0
 
 
@@ -1987,19 +2074,19 @@ def main(argv=None):
     args = parser.parse_args(argv)
     if args.show and args.daemon:
         parser.error("--print and --daemon are mutually exclusive")
+    setup_logging(os.environ)
 
     # A stray start of a disabled instance must not read or ship anything:
     # only the instance enabled by configure-module may run.
     if args.daemon and not is_enabled(os.environ):
-        print("collector is disabled (INSIGHTS_ENABLED is not 1)",
-              file=sys.stderr)
+        log.warning("collector is disabled (INSIGHTS_ENABLED is not 1)")
         return 0
 
     try:
         client = Client(*loki_endpoint(read_loki_environment()))
     except KeyError as exc:
-        print("cannot find the Loki instance: missing {0}; "
-              "run under runagent".format(exc), file=sys.stderr)
+        log.error("cannot find the Loki instance: missing %s; "
+                  "run under runagent", exc)
         return 1
 
     module_id = os.environ.get("MODULE_ID", "insights1")
@@ -2013,7 +2100,7 @@ def main(argv=None):
                                      "unknown",
                                      roster=RosterCache().get(time.time()))
         except LokiError as exc:
-            print("collection failed: {0}".format(exc), file=sys.stderr)
+            log.error("collection failed: %s", exc)
             return 1
         json.dump(payload, sys.stdout, indent=2)
         print()
@@ -2023,7 +2110,7 @@ def main(argv=None):
     # should cost nothing to start, not a collection it then discards.
     url = os.environ.get("INSIGHTS_SERVER_URL")
     if not url:
-        print("INSIGHTS_SERVER_URL is not set", file=sys.stderr)
+        log.error("INSIGHTS_SERVER_URL is not set")
         return 1
     verify = os.environ.get("INSIGHTS_VERIFY_TLS", "").strip().lower() not in (
         "0", "false", "no", "off")

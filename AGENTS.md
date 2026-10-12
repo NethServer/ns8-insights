@@ -38,9 +38,13 @@ The server lives in `nethesis/nethesis-insights` (Go); its API contract is
   instances per node; `configure-module` refuses to enable a second
   instance in the cluster (`find_active_elsewhere`).
 - Module env keys: `INSIGHTS_ENABLED` (`0`/`1`), `INSIGHTS_SERVER_URL`,
-  `INSIGHTS_VERIFY_TLS`. Server settings stay stored when disabled.
+  `INSIGHTS_VERIFY_TLS`, `INSIGHTS_LOG_LEVEL` (`debug`/`info`/`warning`/
+  `error`, default `warning`). Server settings stay stored when disabled.
   Never store the subscription secret in the module environment.
 - The daemon exits at once unless `INSIGHTS_ENABLED=1`.
+- The collector logs through `log` (stdlib `logging`) to stderr, never
+  with `print()`: stdout belongs to `--print`, and under systemd it is a
+  block-buffered pipe whose lines reach the journal only at exit.
 - Keep `import agent` deferred inside functions in the collector, so the
   unit tests can load it without the NS8 SDK.
 - When changing an action's input or output, update its

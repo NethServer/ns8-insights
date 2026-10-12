@@ -36,6 +36,20 @@ def collector():
     return _load()
 
 
+@pytest.fixture(autouse=True)
+def reset_log(collector):
+    """Undo setup_logging() after each test.
+
+    main() binds a handler to the sys.stderr of the test that ran it, which
+    capsys swaps per test, and stops propagation to the root logger that
+    caplog listens on.
+    """
+    yield
+    collector.log.handlers[:] = []
+    collector.log.propagate = True
+    collector.log.setLevel(0)
+
+
 class FakeLokiClient:
     """Enough of Client to drive drain_range(), with no HTTP.
 
