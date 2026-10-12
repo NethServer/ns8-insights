@@ -37,30 +37,21 @@ def collector():
 
 
 class FakeLokiClient:
-    """Enough of Client to drive drain_range() and flush(), with no HTTP.
+    """Enough of Client to drive drain_range(), with no HTTP.
 
     `pages` is a list of tail() results, handed out one per call, so a test
     can make a page exactly TAIL_LIMIT long and watch drain_range keep
-    reading. `baseline` and `digest` stand in for the two queries flush()
-    still makes; both default to {} the way a failing real one would.
+    reading.
     """
 
-    def __init__(self, pages=(), baseline=None, digest=None):
+    def __init__(self, pages=()):
         self.pages = [list(page) for page in pages]
         self.tail_calls = []
-        self._baseline = dict(baseline or {})
-        self._digest = dict(digest or {})
 
     def tail(self, since_ns, until_ns, denylist, self_identifier, limit=None):
         self.tail_calls.append((since_ns, until_ns))
         return self.pages.pop(0) if self.pages else []
 
-    def digest(self, at, range_seconds, denylist, self_identifier):
-        return dict(self._digest)
-
-    def baseline_series(self, at, range_seconds, step_seconds, denylist,
-                        self_identifier):
-        return dict(self._baseline)
 
 
 WINDOW = (datetime.datetime(2026, 9, 1, 9, 45, tzinfo=datetime.timezone.utc),
@@ -75,8 +66,8 @@ def flush_lines(collector):
     family's share exactly `max_lines`, so `max_lines` is how these tests
     pin a share the way they used to pass one to group_templates().
     """
-    def run(lines, max_lines=collector.DEFAULT_MAX_LINES, client=None,
-            store=None, roster=None):
+    def run(lines, max_lines=collector.DEFAULT_MAX_LINES, store=None,
+            roster=None):
         store = store if store is not None else collector.TemplateStore()
         for row in lines:
             # A row may carry a trailing node_id; the older four-field shape
@@ -85,7 +76,6 @@ def flush_lines(collector):
             ts_ms, text, module_id, category = row[:4]
             node_id = row[4] if len(row) > 4 else None
             store.ingest(ts_ms, text, module_id, category, node_id)
-        return collector.flush(client or FakeLokiClient(), store, WINDOW,
-                               max_lines, "self-id", "system-123",
+        return collector.flush(store, WINDOW, max_lines, "system-123",
                                roster=roster)
     return run

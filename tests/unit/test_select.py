@@ -28,14 +28,6 @@ def test_allocate_every_module_gets_at_least_min_share_when_there_is_room(collec
         assert shares[module_id] >= collector.MIN_SHARE
 
 
-def test_allocate_prioritised_modules_get_more(collector):
-    modules = ["a", "b", "c"]
-    shares = collector.allocate(modules, 1000, prioritised=("a",))
-    assert shares["a"] > shares["b"]
-    assert shares["a"] > shares["c"]
-    assert shares["b"] == shares["c"]
-
-
 def test_allocate_more_modules_than_floor_space_gives_equal_shares(collector):
     modules = ["m{0}".format(i) for i in range(20)]
     max_lines = 100  # 20 * MIN_SHARE (20*20=400) >= 100
@@ -43,14 +35,6 @@ def test_allocate_more_modules_than_floor_space_gives_equal_shares(collector):
     values = set(shares.values())
     assert len(values) == 1
     assert sum(shares.values()) <= max_lines
-
-
-def test_allocate_more_modules_than_floor_space_still_prioritised_agnostic(collector):
-    """In the equal-shares branch there is no room to weight -- prioritised
-    modules get the same share as everyone else."""
-    modules = ["m{0}".format(i) for i in range(20)]
-    shares = collector.allocate(modules, 100, prioritised=("m0",))
-    assert len(set(shares.values())) == 1
 
 
 def test_allocate_equal_shares_at_least_one(collector):

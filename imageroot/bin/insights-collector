@@ -23,7 +23,6 @@ import random
 import re
 import signal
 import ssl
-import statistics
 import sys
 import time
 import urllib.error
@@ -33,15 +32,6 @@ import urllib.request
 COLLECTOR_VERSION = "2.1.0"
 DEFAULT_MAX_LINES = 500
 WINDOW_MINUTES = 15
-BASELINE_HOURS = 168
-DEVIATION_TOLERANCE = 3.0
-# The ratio alone fires on any small-count bucket: 1 observed event against
-# an expected 0.2 is already an "over 3x" ratio despite being noise. The
-# sigma term is what suppresses that: a row also has to clear a margin over
-# its own measured dispersion before the gate opens. A row with no
-# dispersion estimate (no expected_stddev) falls back to the ratio alone,
-# so a baseline-query failure cannot silently disable the check.
-DEVIATION_SIGMA = 3.0
 LAST_RUN_FILE = "insights_last_run"
 
 # How long the tail loop waits between reads. Same cadence as the two
@@ -87,8 +77,8 @@ READ_LAG_SECONDS = 30
 # the same "checkpoint complete" wording Prometheus uses), rspamd's
 # per-item timing log, and Alloy/promtail's per-node evaluation log.
 #
-# This list becomes the `!~` stage in Client.tail and Client.digest (built
-# by _filter_stages), a line filter applied to the raw journal JSON --
+# This list becomes the `!~` stage in Client.tail (built by
+# _filter_stages), a line filter applied to the raw journal JSON --
 # line_format runs after it. So every pattern here must match the
 # JSON-embedded text: no quote characters (JSON already escapes them, so a
 # literal `"` could never match) and no anchors (there is no line start or
@@ -96,10 +86,8 @@ READ_LAG_SECONDS = 30
 # into one regex alternation, so none of them may contain an unescaped
 # regex metacharacter -- none of the patterns below need one.
 #
-# Filtering at the query means these lines never travel to the collector
-# AND never reach the digest's observed/expected counts. That symmetry is
-# deliberate: dropping them from both sides at once is what keeps the
-# digest baseline undistorted by noise the model would never see anyway.
+# Filtering at the query means these lines never travel to the collector,
+# so they are neither templated nor counted in the digest.
 DENYLIST = [
     "Head GC completed",
     "Deleting obsolete block",
@@ -915,12 +903,7 @@ def module_family(module_id):
 # 16 families, 16 * 20 = 320 < 500 and the floor holds.
 MIN_SHARE = 20
 
-# Deviating or security-carrying modules get this much of the remainder
-# relative to a quiet one.
-PRIORITY_WEIGHT = 3.0
-
-
-def allocate(buckets, max_lines, prioritised=()):
+def allocate(buckets, max_lines):
     """Return {bucket: share}. The total never exceeds max_lines.
 
     `buckets` are module families as flush() calls this (see MIN_SHARE
@@ -937,13 +920,8 @@ def allocate(buckets, max_lines, prioritised=()):
         share = max(1, max_lines // count)
         return {m: share for m in modules}
 
-    prioritised = set(prioritised)
-    weights = {m: (PRIORITY_WEIGHT if m in prioritised else 1.0) for m in modules}
-    total_weight = sum(weights.values())
-    remainder = max_lines - count * MIN_SHARE
-
-    return {m: MIN_SHARE + int(remainder * weights[m] / total_weight)
-            for m in modules}
+    share = MIN_SHARE + (max_lines - count * MIN_SHARE) // count
+    return {m: share for m in modules}
 
 
 # --------------------------------------------------------------------------
@@ -967,20 +945,7 @@ HOST_BUCKET = ""
 
 
 def _filter_stages(denylist, self_identifier, include_message=False):
-    """Population-filtering LogQL stages shared by Client.digest and lines.
-
-    digest()'s observed/expected counts feed prioritisation and the
-    server's deviation gate; tail() is what the prompt's templates are
-    actually built from. An unfiltered digest would describe a population
-    the prompt never shows, and the gate could then fire on lines the
-    model never saw. Building both queries' filter stages from this one
-    function is what keeps the two from drifting apart again as either
-    query changes -- only the selector and (for tail()) the trailing
-    line_format stage differ between the two callers.
-
-    digest() now runs only as the flat baseline fallback, so the population
-    it has to agree with is the one TemplateStore counts as it folds the
-    tail. That is why these stages still have exactly one definition.
+    """Population-filtering LogQL stages for Client.tail.
 
     The priority is matched as a string, never compared as a number:
     `priority < 5` converts the label, and a record with no PRIORITY field
@@ -1033,91 +998,6 @@ class Client:
     @staticmethod
     def _ns(when):
         return str(int(when.timestamp() * 1e9))
-
-    def digest(self, at, range_seconds, denylist, self_identifier):
-        """{(module_id, priority): count} over the range ending at `at`.
-
-        Filtered by the same stages as tail() (see _filter_stages): an
-        unfiltered aggregation would describe a population the prompt's
-        templates never show, letting the server's deviation gate fire on
-        lines the model never saw. Returns {} on failure. A busy cluster
-        can exceed max_query_series on this aggregation, and losing the
-        digest costs prioritisation and the `expected` field, not the run.
-        """
-        stages = _filter_stages(denylist, self_identifier)
-        query = ('sum by (module_id, priority) (count_over_time('
-                 '{{node_id=~".+"}} {0} [{1}s]))'
-                 ).format(" ".join(stages), int(range_seconds))
-        try:
-            payload = self._get("/loki/api/v1/query",
-                                {"query": query, "time": at.isoformat()})
-        except LokiError:
-            return {}
-        out = {}
-        for series in (payload.get("data") or {}).get("result") or []:
-            labels = series.get("metric") or {}
-            try:
-                priority = int(labels.get("priority", -1))
-                value = float(series["value"][1])
-            except (KeyError, IndexError, TypeError, ValueError):
-                continue
-            out[(labels.get("module_id", HOST_BUCKET), priority)] = value
-        return out
-
-    def baseline_series(self, at, range_seconds, step_seconds, denylist,
-                        self_identifier):
-        """{(module_id, priority): [(ts_seconds, value), ...]} over the
-        `range_seconds` baseline period ending at `at`, in non-overlapping
-        `step_seconds`-wide buckets.
-
-        Same aggregation and the same _filter_stages(...) as digest() --
-        reused, not rebuilt, so the two populations cannot drift apart --
-        but run over /query_range instead of the instant /query endpoint,
-        with count_over_time's range and the request's step both set to
-        `step_seconds` so the buckets tile the period exactly once, with
-        no overlap and no gap, ready for seasonal_baseline() to bucket by
-        hour-of-week.
-
-        This is a heavier query than the instant one digest() runs:
-        query_range evaluates the aggregation once per step across the
-        whole range instead of once at a single instant, so on a busy
-        cluster it is more likely to time out or exceed max_query_series.
-        Returns {} on failure, same contract as digest(): losing this
-        baseline must cost seasonality (flush() falls back to the flat
-        one), not the run.
-        """
-        stages = _filter_stages(denylist, self_identifier)
-        query = ('sum by (module_id, priority) (count_over_time('
-                 '{{node_id=~".+"}} {0} [{1}s]))'
-                 ).format(" ".join(stages), int(step_seconds))
-        start = at - datetime.timedelta(seconds=range_seconds)
-        try:
-            payload = self._get("/loki/api/v1/query_range", {
-                "query": query,
-                "start": self._ns(start), "end": self._ns(at),
-                "step": str(int(step_seconds)),
-            })
-        except LokiError:
-            return {}
-        out = {}
-        for series in (payload.get("data") or {}).get("result") or []:
-            labels = series.get("metric") or {}
-            try:
-                priority = int(labels.get("priority", -1))
-            except (TypeError, ValueError):
-                continue
-            key = (labels.get("module_id", HOST_BUCKET), priority)
-            values = []
-            for pair in series.get("values") or []:
-                try:
-                    ts = int(float(pair[0]))
-                    value = float(pair[1])
-                except (IndexError, TypeError, ValueError):
-                    continue
-                values.append((ts, value))
-            if values:
-                out[key] = values
-        return out
 
     def tail(self, since_ns, until_ns, denylist, self_identifier,
              limit=TAIL_LIMIT):
@@ -1172,81 +1052,15 @@ class Client:
 
 
 # --------------------------------------------------------------------------
-# Seasonal baseline: bucket baseline_series() samples by hour-of-week, so a
-# bucket with a business-hours or nightly-backup shape is compared against
-# its own kind of hour instead of a flat week-long average that shape would
-# always exceed on schedule.
-# --------------------------------------------------------------------------
-
-# With step_seconds equal to the 15-minute collection window and a 168-hour
-# baseline, each hour-of-week bucket collects BASELINE_HOURS * 3600 /
-# step_seconds / 168 = 3600 / 900 = 4 samples. Three is the most that can be
-# demanded while still tolerating one missing sample out of those four.
-MIN_BASELINE_SAMPLES = 3
-
-
-def _hour_of_week(ts_seconds):
-    """UTC hour-of-week, 0-167, Monday 00:00 = 0, for a unix timestamp.
-
-    Its own function so a test can exercise the bucketing rule directly,
-    independent of seasonal_baseline()'s aggregation.
-    """
-    when = datetime.datetime.fromtimestamp(ts_seconds, datetime.timezone.utc)
-    return when.weekday() * 24 + when.hour
-
-
-def seasonal_baseline(series, target_start, minimum_samples=MIN_BASELINE_SAMPLES):
-    """{(module_id, priority): (expected, stddev, sample_count, seasonal)}
-
-    Pure and I/O-free -- `series` is whatever Client.baseline_series
-    returned, `target_start` is the collection window's start -- so it is
-    unit-testable without a Loki client.
-
-    Every sample is bucketed by its own hour-of-week (_hour_of_week). The
-    target bucket is target_start's own hour-of-week. When that bucket
-    already holds at least `minimum_samples` samples, `expected` and
-    `stddev` are that bucket's mean and population standard deviation, and
-    `seasonal` is True. Otherwise there is not yet enough history for that
-    hour of the week -- a node less than a week old, most commonly -- so
-    this falls back to the mean and population standard deviation over
-    ALL samples in the series, with `seasonal` False: the flat behaviour
-    this feature replaces, so a partial week degrades to the old baseline
-    rather than to no baseline at all.
-    """
-    target_bucket = _hour_of_week(target_start.timestamp())
-    out = {}
-    for key, samples in series.items():
-        if not samples:
-            continue
-        by_bucket = collections.defaultdict(list)
-        for ts, value in samples:
-            by_bucket[_hour_of_week(ts)].append(value)
-        target_values = by_bucket.get(target_bucket, [])
-        if len(target_values) >= minimum_samples:
-            values, seasonal = target_values, True
-        else:
-            values = [value for _, value in samples]
-            seasonal = False
-        # statistics.pstdev of a single-element list is correctly 0.0, not
-        # an error, so no extra guard is needed beyond `values` being
-        # non-empty -- guaranteed by the `if not samples: continue` above.
-        expected = statistics.fmean(values)
-        stddev = statistics.pstdev(values)
-        out[key] = (expected, stddev, len(values), seasonal)
-    return out
-
-
-# --------------------------------------------------------------------------
 # Bundle assembly: turn collected lines into the wire payload.
 # --------------------------------------------------------------------------
 
 # Bumped whenever a digest row's shape changes, so a receiving server knows
-# which fields to expect. The deployed server still only accepts 1: the new
-# fields (expected_stddev, baseline_samples, baseline_seasonal) are additive
-# and the server ignores unknown JSON fields, so this stays at 1 until the
-# server explicitly opts in to a 2 it understands. A template's `variants`
-# went away with the wildcarding in masking version 6; the server never read
-# it, and counts its own variants on its own fold.
+# which fields to expect. The server ignores unknown JSON fields and never
+# read the dropped baseline fields (expected, expected_stddev,
+# baseline_samples, baseline_seasonal), so their removal keeps 1. A
+# template's `variants` went away with the wildcarding in masking version
+# 6; the server never read it, and counts its own variants on its own fold.
 SCHEMA_VERSION = 1
 
 # The identifier is carried in the rendered line; the priority prefix is
@@ -1384,8 +1198,8 @@ def rank_templates(entries):
 # targets.
 #
 # Eviction only ever costs templates. observed[] is a plain counter and is
-# never evicted, so a line whose template was dropped is still counted, and
-# the digest the server's deviation gate reads stays complete.
+# never evicted, so a line whose template was dropped is still counted in
+# the digest.
 # --------------------------------------------------------------------------
 
 # Roughly 6 MB at SAMPLE_MAX_CHARS; the unit caps the process at 256M.
@@ -1412,10 +1226,9 @@ class TemplateStore:
     DIFFERENT families that happen to mask to the same text are two
     templates, exactly as the old per-family grouping made them.
 
-    observed[] stays keyed on the INSTANCE on purpose: the server's
-    module_baselines and its deviation gate are per-instance, so that one
-    instance flooding is still visible instead of averaged out across its
-    siblings.
+    observed[] stays keyed on the INSTANCE on purpose, so that one instance
+    flooding is still visible in the digest instead of averaged out across
+    its siblings.
 
     Counting here rather than in a separate Loki aggregation is what makes
     the counted population and the templated population the same population
@@ -1633,8 +1446,7 @@ def scrape_node_fqdn(ip_address, timeout=ROSTER_TIMEOUT_SECONDS):
                 return None
     except Exception:
         # Every failure mode is the same failure: no name for this node this
-        # time. Losing the roster must cost attribution names, never the run
-        # -- the same contract digest() and baseline_series() follow.
+        # time. Losing the roster must cost attribution names, never the run.
         return None
     return None
 
@@ -1784,35 +1596,6 @@ def write_cursor(value):
               file=sys.stderr)
 
 
-def row_deviates(row):
-    """True when one assembled digest row deviates enough to matter.
-
-    Shared by flush() (which modules get prioritised for line budget)
-    and is_quiet() (whether the window is worth shipping at all), both
-    reading the same assembled bundle. Defined once and called from both
-    so they cannot drift apart -- two separate copies of this test could
-    disagree, and a window could then be judged quiet while one of its
-    own rows was simultaneously prioritised as deviating.
-
-    A row deviates when `expected` is present and greater than zero, the
-    observed/expected ratio exceeds DEVIATION_TOLERANCE, and -- when the
-    row carries an `expected_stddev` greater than zero -- observed also
-    clears expected by DEVIATION_SIGMA standard deviations (see
-    DEVIATION_SIGMA above for why the ratio alone is not enough). A row
-    with no dispersion estimate falls back to the ratio alone, so a
-    baseline-query failure cannot silently disable the check.
-    """
-    expected = row.get("expected", 0)
-    if not expected or expected <= 0:
-        return False
-    if row["observed"] / expected <= DEVIATION_TOLERANCE:
-        return False
-    stddev = row.get("expected_stddev", 0)
-    if stddev and stddev > 0:
-        return row["observed"] > expected + DEVIATION_SIGMA * stddev
-    return True
-
-
 def drain_range(client, store, since_ns, until_ns, self_identifier,
                 stop=None):
     """Ingest every collectable line in [since_ns, until_ns) into `store`.
@@ -1843,80 +1626,25 @@ def drain_range(client, store, since_ns, until_ns, self_identifier,
     return until_ns
 
 
-def flush(client, store, window, max_lines, self_identifier, system_id,
-          minutes=WINDOW_MINUTES, roster=None):
+def flush(store, window, max_lines, system_id, roster=None):
     """Turn what the store has accumulated into a bundle, and reset it.
 
     The store is drained first and unconditionally: whatever happens below,
     this window's aggregate must not carry into the next one.
 
-    The baseline is the only thing still read from Loki here, and both the
-    calls that fetch it swallow their own LokiError and return {} -- losing
-    a baseline costs the `expected` field, not the bundle. So this does not
-    raise, which is what lets the daemon drain unconditionally.
+    Takes no Loki client: the digest counts come from the same in-memory
+    fold as the templates.
     """
     start, end = window
     entries, observed, lines_seen, evicted = store.drain()
-    window_seconds = (end - start).total_seconds()
 
-    # Seasonal baseline, bucketed by hour-of-week (seasonal_baseline): a
-    # flat 168-hour mean fires the deviation gate on any bucket with a
-    # business-hours or nightly-backup shape, because that shape exceeds
-    # 3x its own week-long average on schedule, every day, by design.
-    #
-    # The step is the NOMINAL window (--minutes) rather than this window's
-    # actual length. The two agree for every window the boundary logic
-    # produces; they differ only for the partial one the tail loop opens on
-    # a start or a restart, where the cursor decides the start. Sizing the
-    # step off that partial length would shift the baseline buckets for one
-    # bundle, and MIN_BASELINE_SAMPLES' arithmetic is sized against a stable
-    # step. A seasonal `expected` therefore needs no rescaling -- unlike the
-    # flat fallback below -- but it does have to track --minutes: a step
-    # left at 15 minutes while the window is 5 would report an `expected`
-    # three times the population `observed` counts, and the deviation gate
-    # would quietly stop firing.
-    step_seconds = minutes * 60
-    series = client.baseline_series(end, BASELINE_HOURS * 3600, step_seconds,
-                                    DENYLIST, self_identifier)
-    seasonal = seasonal_baseline(series, start) if series else {}
-
-    # baseline_series() is the heavier query and can time out or exceed a
-    # limit where the cheap flat digest() still succeeds. Falling back to
-    # the old flat arithmetic here -- scaled, unlike the seasonal path
-    # above -- is what keeps a node whose baseline query is too heavy on
-    # today's behaviour instead of losing `expected` entirely. This is the
-    # only surviving caller of digest(), and the reason it still exists.
-    baseline = {}
-    if not series:
-        baseline = client.digest(end, BASELINE_HOURS * 3600, DENYLIST,
-                                 self_identifier)
-
-    # Digest rows, and the set of module INSTANCES that deviate from
-    # baseline. Unlike templates[], digest[] stays keyed on the instance on
-    # purpose: the server's module_baselines and its deviation gate are
-    # per-instance so that one instance flooding is still visible instead
-    # of averaged out across its siblings.
-    digest_rows, deviating = [], set()
-    for (module_id, priority), count in sorted(observed.items()):
-        row = {"module_id": module_id, "priority": priority,
-               "observed": int(count)}
-        key = (module_id, priority)
-        if key in seasonal:
-            expected, stddev, sample_count, is_seasonal = seasonal[key]
-            if expected > 0:
-                row["expected"] = round(expected, 3)
-                row["expected_stddev"] = round(stddev, 3)
-                row["baseline_samples"] = sample_count
-                row["baseline_seasonal"] = is_seasonal
-        else:
-            base = baseline.get(key)
-            if base:
-                expected = base / BASELINE_HOURS * (window_seconds / 3600.0)
-                if expected > 0:
-                    row["expected"] = round(expected, 3)
-        if row_deviates(row):
-            deviating.add(module_id)
-        digest_rows.append(row)
+    # Digest rows stay keyed on the module INSTANCE, unlike templates[],
+    # so that one instance flooding is still visible instead of averaged
+    # out across its siblings.
+    digest_rows = [
+        {"module_id": module_id, "priority": priority, "observed": int(count)}
+        for (module_id, priority), count in sorted(observed.items())
+    ]
 
     # Templates are already keyed on the family by TemplateStore, so this
     # only has to bucket them. The budget is divided between the families
@@ -1928,12 +1656,7 @@ def flush(client, store, window, max_lines, self_identifier, system_id,
         by_family.setdefault(entry["module_id"], []).append(entry)
     families = sorted(by_family)
 
-    # The weighting input is folded to families the same way the buckets
-    # are, or a deviating instance would weight a key allocate() never
-    # sees.
-    shares = allocate(
-        families, max_lines,
-        prioritised={module_family(module_id) for module_id in deviating})
+    shares = allocate(families, max_lines)
 
     templates, truncated = [], []
     lines_kept = 0
@@ -1993,7 +1716,7 @@ def flush(client, store, window, max_lines, self_identifier, system_id,
 
 
 def collect_window(client, window, max_lines, self_identifier, system_id,
-                   minutes=WINDOW_MINUTES, roster=None):
+                   roster=None):
     """One closed window, start to finish: the one-shot path.
 
     Exactly the daemon's two steps -- drain_range fills a store, flush turns
@@ -2004,8 +1727,7 @@ def collect_window(client, window, max_lines, self_identifier, system_id,
     start, end = window
     store = TemplateStore()
     drain_range(client, store, ns(start), ns(end), self_identifier)
-    return flush(client, store, window, max_lines, self_identifier, system_id,
-                 minutes, roster=roster)
+    return flush(store, window, max_lines, system_id, roster=roster)
 
 
 def ship(payload, url, system_id, secret, verify=True, timeout=60):
@@ -2043,21 +1765,15 @@ def mark_last_run():
 def is_quiet(payload):
     """True when a bundle has nothing worth shipping.
 
-    A window is quiet when it produced no templates at all and no digest
-    row deviates enough from its own baseline to matter (row_deviates,
-    shared with flush() so the two decisions cannot disagree -- a
-    window judged quiet here must never contain a row flush() itself
-    prioritised as deviating). Reads only payload["templates"] and
-    payload["digest"], so this is a pure function of the assembled bundle
-    and can be tested without a Loki client.
+    A window is quiet when it produced no templates at all. Reads only
+    payload["templates"], so this is a pure function of the assembled
+    bundle and can be tested without a Loki client.
 
     Suppressing a quiet window saves the HTTP round trip and the server's
     ingest work, but not LLM cost: the server's own gate already declines
     an empty bundle before it would spend a token on one.
     """
-    if payload["templates"]:
-        return False
-    return not any(row_deviates(row) for row in payload["digest"])
+    return not payload["templates"]
 
 
 def ship_bundle(payload, system_id, secret, url, verify):
@@ -2095,8 +1811,7 @@ def ship_bundle(payload, system_id, secret, url, verify):
     return True
 
 
-def flush_and_ship(client, store, window, max_lines, module_id, url, verify,
-                   minutes=WINDOW_MINUTES, roster=None):
+def flush_and_ship(store, window, max_lines, url, verify, roster=None):
     """Close one window: drain the store into a bundle and send it.
 
     flush() runs before the identity check, unlike the one-shot path below.
@@ -2105,9 +1820,7 @@ def flush_and_ship(client, store, window, max_lines, module_id, url, verify,
     thing holding the process inside its MemoryMax.
     """
     system_id, secret = read_identity()
-    payload = flush(client, store, window, max_lines,
-                    "{0}/insights-collector".format(module_id),
-                    system_id or "unknown", minutes,
+    payload = flush(store, window, max_lines, system_id or "unknown",
                     roster=roster.get(time.time()) if roster else None)
     if not system_id:
         print("no subscription found; cannot ship bundles", file=sys.stderr)
@@ -2116,7 +1829,7 @@ def flush_and_ship(client, store, window, max_lines, module_id, url, verify,
 
 
 def collect_and_ship(client, window, max_lines, module_id, url, verify,
-                     minutes=WINDOW_MINUTES, roster=None):
+                     roster=None):
     """Run one closed window end-to-end. Returns True if the bundle shipped.
 
     Identity is checked first here, before the Loki reads: a one-shot on an
@@ -2131,7 +1844,7 @@ def collect_and_ship(client, window, max_lines, module_id, url, verify,
     try:
         payload = collect_window(client, window, max_lines,
                                  "{0}/insights-collector".format(module_id),
-                                 system_id, minutes,
+                                 system_id,
                                  roster=(roster or RosterCache()).get(time.time()))
     except LokiError as exc:
         print("collection failed: {0}".format(exc), file=sys.stderr)
@@ -2203,7 +1916,7 @@ def run_daemon(client, minutes, max_lines, module_id, url, verify):
         if boundary < now - lag:
             # Loki was unreachable long enough that replaying the gap would
             # mean hundreds of windows of catch-up, each with its own
-            # baseline query and POST. Abandon the gap and resync instead.
+            # POST. Abandon the gap and resync instead.
             print("{0:.0f} minutes behind; abandoning the gap".format(
                 (now - boundary).total_seconds() / 60), file=sys.stderr)
             store.drain()
@@ -2215,7 +1928,7 @@ def run_daemon(client, minutes, max_lines, module_id, url, verify):
         try:
             # Never read past the boundary while waiting out the jitter, so
             # the store holds exactly the window it is about to be drained
-            # into and `expected` keeps comparing equal-length periods.
+            # into.
             until_ns = min(time.time_ns() - READ_LAG_SECONDS * 1000000000,
                            ns(boundary))
             if until_ns > cursor_ns:
@@ -2234,8 +1947,8 @@ def run_daemon(client, minutes, max_lines, module_id, url, verify):
         now = datetime.datetime.now(datetime.timezone.utc)
         if now >= boundary + datetime.timedelta(seconds=jitter) \
                 and cursor_ns >= ns(boundary):
-            flush_and_ship(client, store, (window_start, boundary), max_lines,
-                           module_id, url, verify, minutes, roster=roster)
+            flush_and_ship(store, (window_start, boundary), max_lines,
+                           url, verify, roster=roster)
             window_start = boundary
             boundary += datetime.timedelta(minutes=minutes)
             jitter = random.uniform(0, max_jitter)
@@ -2264,8 +1977,7 @@ def main(argv=None):
                              "%(default)s). Under --daemon this is how often "
                              "the accumulated stream is shipped; otherwise it "
                              "is the size of the one closed window that gets "
-                             "read. Either way it also sets the baseline "
-                             "bucket the digest's `expected` is measured over")
+                             "read")
     parser.add_argument("--print", dest="show", action="store_true",
                         help="write the bundle to stdout instead of shipping")
     parser.add_argument("--daemon", action="store_true",
@@ -2298,7 +2010,7 @@ def main(argv=None):
         try:
             payload = collect_window(client, window, args.max_lines,
                                      "{0}/insights-collector".format(module_id),
-                                     "unknown", args.minutes,
+                                     "unknown",
                                      roster=RosterCache().get(time.time()))
         except LokiError as exc:
             print("collection failed: {0}".format(exc), file=sys.stderr)
@@ -2323,7 +2035,7 @@ def main(argv=None):
     window = compute_window(datetime.datetime.now(datetime.timezone.utc),
                             args.minutes)
     return 0 if collect_and_ship(client, window, args.max_lines, module_id,
-                                 url, verify, args.minutes) else 1
+                                 url, verify) else 1
 
 
 if __name__ == "__main__":

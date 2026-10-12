@@ -171,8 +171,8 @@ def test_a_hit_refreshes_recency(collector):
 
 
 def test_eviction_never_loses_a_count(collector):
-    """observed[] is not evicted, so the digest the server's deviation gate
-    reads stays complete even when the templates behind it are gone."""
+    """observed[] is not evicted, so the digest stays complete even when
+    the templates behind it are gone."""
     store = collector.TemplateStore(max_templates=2)
     _ingest(store, [_line(n) for n in range(50)])
     _entries, observed, seen, evicted = store.drain()

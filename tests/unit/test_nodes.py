@@ -136,8 +136,7 @@ def test_scrape_returns_none_when_the_metric_is_absent(collector, monkeypatch):
 
 
 def test_scrape_returns_none_on_any_failure(collector, monkeypatch):
-    """Losing a name must cost attribution names, never the run -- the same
-    contract digest() and baseline_series() follow."""
+    """Losing a name must cost attribution names, never the run."""
     _patch_urlopen(collector, monkeypatch, raises=OSError("unreachable"))
     assert collector.scrape_node_fqdn("10.5.4.1") is None
 
