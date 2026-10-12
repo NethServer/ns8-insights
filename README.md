@@ -65,6 +65,11 @@ Let's assume that the instance is named `insights1`.
 - `verify_tls`: verify the server TLS certificate. If omitted, the current
   value is kept. Initially `true`. Turn it
   off only for a test server with a self-signed certificate.
+- `log_level`: lowest level of the collector messages written to the
+  journal, one of `debug`, `info`, `warning`, `error`. If omitted, the
+  current value is kept. Initially `warning`: only problems are logged.
+  `info` adds one line per window (`shipped …` or `quiet, suppressed`);
+  `debug` also traces the log stream and the window schedule.
 
 Disable it again (the server settings are kept):
 
@@ -79,6 +84,7 @@ Read the configuration:
   "enabled": true,
   "base_url": "https://insights.nethesis.it",
   "verify_tls": true,
+  "log_level": "warning",
   "status": "active",
   "subscription_configured": true,
   "active_elsewhere": "",
@@ -123,6 +129,16 @@ Without `--daemon`, a run reads one closed window, sends it and exits.
 Check the collector health with:
 
     runagent -m insights1 journalctl --user -u insights-collector
+
+To follow it while debugging, raise the log level (the collector restarts)
+and set it back when done:
+
+    api-cli run module/insights1/configure-module --data '{"enabled": true, "log_level": "debug"}'
+    journalctl -t insights1/insights-collector -f
+    api-cli run module/insights1/configure-module --data '{"enabled": true, "log_level": "warning"}'
+
+A manual run reads the same `INSIGHTS_LOG_LEVEL` variable from the module
+environment.
 
 ## Privacy
 

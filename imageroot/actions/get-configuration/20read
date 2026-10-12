@@ -32,6 +32,7 @@ config = {
     'enabled': os.getenv('INSIGHTS_ENABLED', '0') == '1',
     'base_url': os.getenv('INSIGHTS_SERVER_URL', insights.DEFAULT_SERVER_URL),
     'verify_tls': os.getenv('INSIGHTS_VERIFY_TLS', '1') != '0',
+    'log_level': os.getenv('INSIGHTS_LOG_LEVEL') or 'warning',
     'status': status,
     'subscription_configured': insights.get_subscription(rdb) != (None, None),
     'active_elsewhere': insights.find_active_elsewhere(rdb),

@@ -11,3 +11,4 @@ import insights
 agent.set_env('INSIGHTS_ENABLED', '0')
 agent.set_env('INSIGHTS_SERVER_URL', insights.DEFAULT_SERVER_URL)
 agent.set_env('INSIGHTS_VERIFY_TLS', '1')
+agent.set_env('INSIGHTS_LOG_LEVEL', 'warning')

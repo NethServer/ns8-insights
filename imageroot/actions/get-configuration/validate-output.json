@@ -8,6 +8,7 @@
             "enabled": true,
             "base_url": "https://insights.nethesis.it",
             "verify_tls": true,
+            "log_level": "warning",
             "status": "active",
             "subscription_configured": true,
             "active_elsewhere": "",
@@ -19,6 +20,7 @@
         "enabled",
         "base_url",
         "verify_tls",
+        "log_level",
         "status",
         "subscription_configured",
         "active_elsewhere",
@@ -33,6 +35,10 @@
         },
         "verify_tls": {
             "type": "boolean"
+        },
+        "log_level": {
+            "type": "string",
+            "description": "Lowest level of the collector messages written to the journal"
         },
         "status": {
             "type": "string",

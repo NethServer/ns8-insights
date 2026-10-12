@@ -7,7 +7,8 @@
         {
             "enabled": true,
             "base_url": "https://insights.nethesis.it",
-            "verify_tls": true
+            "verify_tls": true,
+            "log_level": "warning"
         },
         {
             "enabled": false
@@ -32,6 +33,11 @@
         "verify_tls": {
             "type": "boolean",
             "description": "Verify the TLS certificate of the insights server. If omitted, the current value is kept (initially true)"
+        },
+        "log_level": {
+            "type": "string",
+            "enum": ["debug", "info", "warning", "error"],
+            "description": "Lowest level of the collector messages written to the journal: info adds one line per window, debug also traces the log stream. If omitted, the current value is kept (initially warning)"
         }
     }
 }

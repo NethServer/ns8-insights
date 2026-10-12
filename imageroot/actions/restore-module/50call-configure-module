@@ -37,6 +37,7 @@ response = agent.tasks.run(
         'enabled': enabled,
         'base_url': os.getenv('INSIGHTS_SERVER_URL', insights.DEFAULT_SERVER_URL),
         'verify_tls': os.getenv('INSIGHTS_VERIFY_TLS', '1') != '0',
+        'log_level': os.getenv('INSIGHTS_LOG_LEVEL') or 'warning',
     },
 )
 agent.assert_exp(response['exit_code'] == 0)
