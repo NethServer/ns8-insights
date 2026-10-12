@@ -58,6 +58,16 @@ The injected noise reached Loki
     Should Be Equal As Integers    ${rc}    0    logcli failed: ${output}
     Should Contain    ${output}    robot synthetic error
 
+Inject synthetic noise
+    FOR    ${i}    IN RANGE    5
+        Execute Command    logger -p daemon.err -t robot-noise robot synthetic error ${i}
+    END
+
+Wait for the next minute
+    # Read the node clock: the collector computes its window from it.
+    ${second} =    Execute Command    date +%-S
+    Sleep    ${{ 61 - int(${second}) }}s
+
 The stub recorded a bundle from the collector
     ${output}    ${rc} =    Execute Command    cat ${RECORD_FILE}    return_rc=${True}
     Should Be Equal As Integers    ${rc}    0    ${RECORD_FILE} was not created: ${output}
@@ -92,10 +102,8 @@ Provide a subscription for the test
         Set Suite Variable    ${FAKE_SUBSCRIPTION}    ${TRUE}
     END
 
-Inject synthetic noise for the window
-    FOR    ${i}    IN RANGE    5
-        Execute Command    logger -p daemon.err -t robot-noise robot synthetic error ${i}
-    END
+Synthetic noise reaches Loki
+    Inject synthetic noise
     Wait Until Keyword Succeeds    90s    10s    The injected noise reached Loki
 
 Configure insights against the stub
@@ -112,9 +120,16 @@ get-configuration reports the enabled collector
 
 A single run ships a bundle authenticated with the subscription
     # The daemon may or may not have sent its first window yet: run one
-    # collection directly rather than racing it.
+    # collection directly rather than racing it. A single run collects
+    # the last closed window, never the open one. With one-minute windows,
+    # noise written at the start of a minute is in the closed window as
+    # soon as the next minute starts; with the default 15 minutes the
+    # noise would almost always sit in the open window.
+    Wait for the next minute
+    Inject synthetic noise
+    Wait for the next minute
     ${output}    ${rc} =    Execute Command
-    ...    runagent -m ${module_id} ../bin/insights-collector
+    ...    runagent -m ${module_id} ../bin/insights-collector --minutes 1
     ...    return_rc=${True}
     Should Be Equal As Integers    ${rc}    0    single run failed: ${output}
     Wait Until Keyword Succeeds    60s    5s    The stub recorded a bundle from the collector
