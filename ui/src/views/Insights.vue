@@ -370,11 +370,9 @@ export default {
       return this.moduleNames(finding).join(", ") || "-";
     },
     shortNodeNames(finding) {
-      // the cluster nodes usually share the domain: keep the host part
       return this.nodeNames(finding).map((name) => name.split(".")[0]);
     },
     formatShortList(names) {
-      // long lists stretch the table: the full one is in the row details
       const max = 2;
       if (names.length <= max) {
         return names.join(", ") || "-";
@@ -573,6 +571,7 @@ export default {
 
 .details-text {
   max-width: 48rem;
+  overflow-wrap: anywhere;
   margin-bottom: $spacing-05;
 }
 
@@ -597,7 +596,9 @@ export default {
   font-size: 0.75rem;
   white-space: pre;
   overflow-x: auto;
-  max-width: 100%;
+  width: 0;
+  min-width: 100%;
+  box-sizing: border-box;
   padding: $spacing-03;
   background-color: rgba(128, 128, 128, 0.12);
 }
