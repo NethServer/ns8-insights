@@ -9,6 +9,7 @@ method is monkeypatched to return canned payloads and record what it was
 called with.
 """
 import datetime
+import re
 
 import pytest
 
@@ -28,8 +29,15 @@ def test_filter_stages_basic(collector):
     assert stages == [
         '| json priority="PRIORITY", identifier="SYSLOG_IDENTIFIER"',
         '| identifier != "loki1/insights-collector"',
-        '| priority < 5 or category="security"',
+        '| priority=~"[0-4]" or category="security"',
     ]
+
+
+def test_filter_stages_never_convert_the_priority(collector):
+    """A numeric comparison fails on a record with no PRIORITY field, and
+    Loki then rejects the whole metric query with a 400."""
+    for stage in collector._filter_stages(["a"], "id", include_message=True):
+        assert not re.search(r"priority\s*[<>]", stage)
 
 
 def test_filter_stages_denylist_appended_only_when_non_empty(collector):

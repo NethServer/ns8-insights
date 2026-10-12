@@ -981,6 +981,12 @@ def _filter_stages(denylist, self_identifier, include_message=False):
     digest() now runs only as the flat baseline fallback, so the population
     it has to agree with is the one TemplateStore counts as it folds the
     tail. That is why these stages still have exactly one definition.
+
+    The priority is matched as a string, never compared as a number:
+    `priority < 5` converts the label, and a record with no PRIORITY field
+    fails that conversion. A metric query then answers 400 for the whole
+    range, and a log query keeps the record, unfiltered, with an
+    __error__ label. One such record in range is enough.
     """
     fields = 'priority="PRIORITY", identifier="SYSLOG_IDENTIFIER"'
     if include_message:
@@ -988,7 +994,7 @@ def _filter_stages(denylist, self_identifier, include_message=False):
     stages = [
         '| json {0}'.format(fields),
         '| identifier != "{0}"'.format(self_identifier),
-        '| priority < 5 or category="security"',
+        '| priority=~"[0-4]" or category="security"',
     ]
     if denylist:
         stages.append('!~ "{0}"'.format("|".join(denylist)))
