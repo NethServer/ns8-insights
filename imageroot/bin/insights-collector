@@ -256,7 +256,14 @@ def sanitize_line(raw):
 # <hex>-<random letters>; the hex rule took the first part and left the
 # letters, so every nethvoice-proxy INVITE auth failure was a new template:
 # "[SECURITY-AUTHFAIL] <HEX>-dseadsfjqujt INVITE-<NUM> ... callid=<HEX>-...".
-MASKING_VERSION = 7
+#
+# 8: rules 13 and 14b also take a user field with a "_" prefix. postfix
+# logs a failed SASL login as "sasl_username=name", and \b never matched
+# after the "_", so each account a password-guessing attack tried was a new
+# template with the name in clear. And a user field whose value earlier
+# rules masked becomes <USER> (see _fold_user_values), so
+# "sasl_username=<HOST>" and kamailio's "user=<HEX>" join the plain names.
+MASKING_VERSION = 8
 
 # Placeholders already present in the input are left alone, which is what
 # makes mask() idempotent. Listed here so one rule can protect all of them.
@@ -482,6 +489,26 @@ FOLD_RULES = [
         r'\1<ID>',
     ),
 ]
+
+# A user field whose value the rules masked as something else: an account
+# that looks like a domain is <HOST> by then, "alice@example.com" is
+# <USER><HOST>, a numeric one may be <HEX>. Rules 13 and 14b never see
+# those values, since _mask_apply hides placeholders from every rule, so
+# one password-guessing attack would still split into a template per
+# shape. A value made only of placeholders and "@.+-" becomes <USER>; one
+# that is <USER> already is left as is, so a second mask() pass changes
+# nothing.
+_USER_VALUE = re.compile(
+    r'(?i)(?<![a-z0-9])(user(?:name)?)\s*([=:])\s*'
+    r'(?!<USER>(?=[\s,;)]|$))(?:' + _PLACEHOLDER + r'|[@.+-])+(?=[\s,;)]|$)')
+
+
+def _fold_user_values(line):
+    """Spaced like rules 13 and 14b: "name=<USER>", "name: <USER>"."""
+    return _USER_VALUE.sub(
+        lambda m: m.group(1) + ('=' if m.group(2) == '=' else ': ') + '<USER>',
+        line)
+
 
 # The unquoted SIP Call-ID kamailio logs in a callid= field and as the
 # "$ci $rm-$cs" xlog prefix -- the Call-ID, then the method and the CSeq
@@ -769,8 +796,16 @@ MASKING_RULES = [
     #     cost control it exists to provide. The retained sample line
     #     still carries the actual account name, and the count carries
     #     the volume.
+    #
+    #     The field may carry a prefix joined by "_", like postfix's
+    #     "sasl_username=name": "_" is a word character, so the start is a
+    #     lookbehind for "no letter or digit" rather than \b. "ruser=" stays
+    #     out.
+    #
+    #     A value an earlier rule already masked is out of reach here: see
+    #     _fold_user_values.
     (
-        re.compile(r'(?i)\b(user(?:name)?)\s*=\s*(?!<)[^\s,;]+'),
+        re.compile(r'(?i)(?<![a-z0-9])(user(?:name)?)\s*=\s*(?!<)[^\s,;]+'),
         r'\1=<USER>',
     ),
     # 14. The same, written "user name" with whitespace instead of "=". The
@@ -783,8 +818,9 @@ MASKING_RULES = [
     # 14b. The same, written "user: name" -- nethcti's "(user: alessandro)".
     #      The value stops at a closing parenthesis as well as at the usual
     #      separators, so the ")" of that shape survives.
+    #      Prefixes are allowed as in rule 13.
     (
-        re.compile(r'(?i)\b(user(?:name)?):\s*(?!<)[^\s,;)]+'),
+        re.compile(r'(?i)(?<![a-z0-9])(user(?:name)?):\s*(?!<)[^\s,;)]+'),
         r'\1: <USER>',
     ),
     # 15. GeoIP country codes written as a field, e.g. "country=US" or
@@ -887,6 +923,7 @@ def mask(line):
         rest = pattern.sub(replacement, rest)
     for pattern, replacement in MASKING_RULES:
         rest = _mask_apply(pattern, replacement, rest)
+    rest = _fold_user_values(rest)
     rest = _fold_sip_call_ids(rest)
     rest = _REPEATED_PLACEHOLDER.sub(r'\1', rest)
     return prefix + rest

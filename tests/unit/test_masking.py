@@ -762,7 +762,7 @@ def test_v7_stored_invite_call_id_tail_is_masked(collector):
     assert collector.mask(STORED_INVITE_AUTHFAIL) == (
         "<3> [kamailio] <NUM>(<PID>) WARNING: <script>: [SECURITY-AUTHFAIL] "
         "<ID> INVITE-<NUM> - event=auth_failure method=INVITE "
-        "status=<NUM> src_ip=<IP> user=<HEX> callid=<ID>"
+        "status=<NUM> src_ip=<IP> user=<USER> callid=<ID>"
     )
 
 
@@ -819,5 +819,66 @@ def test_v7_call_id_fold_is_idempotent(collector, raw):
     assert collector.mask(once) == once
 
 
-def test_v7_masking_version(collector):
-    assert collector.MASKING_VERSION == 7
+# --------------------------------------------------------------------------
+# Masking version 8: a user field with a prefix. postfix logs the account
+# of a failed SASL login as "sasl_username=name"; the "_" before "username"
+# is a word character, so rule 13 never matched and every account tried by
+# a password-guessing attack was a new template with the name in clear.
+# A user field whose value an earlier rule masked (<HOST>, <HEX>) now folds
+# to <USER> as well.
+# --------------------------------------------------------------------------
+
+def _sasl_fail(account):
+    return ("<4> [postfix/smtpd] warning: unknown[203.0.113.7]: SASL LOGIN "
+            "authentication failed: (reason unavailable), sasl_username=" + account)
+
+
+SASL_FAIL_TEMPLATE = (
+    "<4> [postfix/smtpd] warning: unknown[<IP>]: SASL LOGIN "
+    "authentication failed: (reason unavailable), sasl_username=<USER>"
+)
+
+
+@pytest.mark.parametrize("account", [
+    "marzio", "clienti", "mail.example.com", "deadbeef1234", "marzio@example.com",
+])
+def test_v8_sasl_username_is_masked(collector, account):
+    assert _template(collector, _sasl_fail(account)) == SASL_FAIL_TEMPLATE
+
+
+def test_v8_stored_sasl_username_is_masked(collector):
+    stored = SASL_FAIL_TEMPLATE.replace("<USER>", "marzio")
+    assert collector.mask(stored) == SASL_FAIL_TEMPLATE
+    assert collector.mask(SASL_FAIL_TEMPLATE) == SASL_FAIL_TEMPLATE
+    hidden = SASL_FAIL_TEMPLATE.replace("=<USER>", "=<HOST>")
+    assert collector.mask(hidden) == SASL_FAIL_TEMPLATE
+
+
+@pytest.mark.parametrize("text, expected", [
+    ("db_user=alice", "db_user=<USER>"),
+    ("sasl_username: bob", "sasl_username: <USER>"),
+    ("user=<HEX>", "user=<USER>"),
+    ("(user: <HOST>)", "(user: <USER>)"),
+    ("user=<HOST>, ok", "user=<USER>, ok"),
+    ("user=<USER><HOST>", "user=<USER>"),
+    ("user=<USER> from <HOST>", "user=<USER> from <HOST>"),
+    # Still a whole field name: no letter or digit right before "user".
+    ("ruser=alice", "ruser=alice"),
+])
+def test_v8_prefixed_user_fields(collector, text, expected):
+    assert collector.mask(text) == expected
+
+
+@pytest.mark.parametrize("raw", [
+    _sasl_fail("mail.example.com"),
+    _sasl_fail("marzio@example.com"),
+    "(user: <HOST>)",
+    "user=<HEX>, ok",
+])
+def test_v8_user_fold_is_idempotent(collector, raw):
+    once = _template(collector, raw)
+    assert collector.mask(once) == once
+
+
+def test_v8_masking_version(collector):
+    assert collector.MASKING_VERSION == 8
