@@ -728,5 +728,96 @@ def test_v6_templates_carry_no_wildcards(collector):
     assert not hasattr(collector, "cluster_templates")
 
 
-def test_v6_masking_version(collector):
-    assert collector.MASKING_VERSION == 6
+
+
+# --------------------------------------------------------------------------
+# Masking version 7: the unquoted SIP Call-ID. nethvoice-proxy's auth
+# failure line logs it twice, as kamailio's "$ci $rm-$cs" prefix and in a
+# callid= field, and some user agents mint it as <hex>-<random letters>:
+# the hex was masked, the letters were not, one template per call.
+# --------------------------------------------------------------------------
+
+def _authfail(callid, method="INVITE"):
+    return (
+        "<3> [kamailio] 12(345) WARNING: <script>: [SECURITY-AUTHFAIL] "
+        f"{callid} {method}-1 - event=auth_failure method={method} status=401 "
+        f"src_ip=203.0.113.7 user=1001 callid={callid}"
+    )
+
+
+# As the server stores them today, under masking version 6.
+STORED_INVITE_AUTHFAIL = (
+    "<3> [kamailio] <NUM>(<PID>) WARNING: <script>: [SECURITY-AUTHFAIL] "
+    "<HEX>-dseadsfjqujt INVITE-<NUM> - event=auth_failure method=INVITE "
+    "status=<NUM> src_ip=<IP> user=<HEX> callid=<HEX>-dseadsfjqujt"
+)
+STORED_REGISTER_AUTHFAIL = (
+    "<3> [kamailio] <NUM>(<PID>) WARNING: <script>: [SECURITY-AUTHFAIL] "
+    "<ID>@<IP> REGISTER-<NUM> - event=auth_failure method=REGISTER "
+    "status=<NUM> src_ip=<IP> user=<USER> callid=<ID>@<IP>"
+)
+
+
+def test_v7_stored_invite_call_id_tail_is_masked(collector):
+    assert collector.mask(STORED_INVITE_AUTHFAIL) == (
+        "<3> [kamailio] <NUM>(<PID>) WARNING: <script>: [SECURITY-AUTHFAIL] "
+        "<ID> INVITE-<NUM> - event=auth_failure method=INVITE "
+        "status=<NUM> src_ip=<IP> user=<HEX> callid=<ID>"
+    )
+
+
+def test_v7_stored_register_line_is_unchanged(collector):
+    assert collector.mask(STORED_REGISTER_AUTHFAIL) == STORED_REGISTER_AUTHFAIL
+
+
+def test_v7_raw_register_line_keeps_its_template(collector):
+    out = _template(collector, _authfail("MzM4ZjNhYTk5YjE4@192.0.2.4", "REGISTER"))
+    assert out == STORED_REGISTER_AUTHFAIL
+
+
+def test_v7_invite_lines_differing_only_in_the_tail_are_one_template(collector):
+    first = _template(collector, _authfail("3a4f9c2d81e07b6a-dseadsfjqujt"))
+    second = _template(collector, _authfail("3a4f9c2d81e07b6a-qpwmzkrtxbvn"))
+    assert first == second
+    assert "<ID> INVITE-<NUM>" in first
+    assert first.endswith("callid=<ID>")
+    assert "dseadsfjqujt" not in first
+
+
+def test_v7_call_id_prefix_without_a_field_is_masked(collector):
+    stored = "<3> [kamailio] <NUM>(<PID>) ERROR: <script>: fevigort37u6sbhqkm2p9396@<IP> INVITE-<NUM> Malformed SIP request"
+    expected = "<3> [kamailio] <NUM>(<PID>) ERROR: <script>: <ID> INVITE-<NUM> Malformed SIP request"
+    assert collector.mask(stored) == expected
+    assert _template(collector, stored.replace("<NUM>(<PID>)", "12(345)")
+                     .replace("<IP>", "203.0.113.7")
+                     .replace("INVITE-<NUM>", "INVITE-1")) == expected
+
+
+@pytest.mark.parametrize("text, kept", [
+    # A stable suffix of a masked id, with no callid= field and no SIP
+    # method after it.
+    ("restic snapshot 3fa9c2d8e1b7-infra saved", "<HEX>-infra"),
+    # A label right before a method: no digit, no placeholder.
+    ("[SECURITY-AUTHFAIL] INVITE-1 - event=auth_failure", "[SECURITY-AUTHFAIL] INVITE-<NUM>"),
+    # A hyphenated word in a line that also has a Call-ID.
+    (_authfail("3a4f9c2d81e07b6a-dseadsfjqujt").replace("WARNING:", "WARNING: re-auth"),
+     "WARNING: re-auth <script>: [SECURITY-AUTHFAIL] <ID> INVITE-<NUM>"),
+])
+def test_v7_hyphenated_words_are_left_alone(collector, text, kept):
+    assert kept in _template(collector, text)
+
+
+@pytest.mark.parametrize("raw", [
+    _authfail("3a4f9c2d81e07b6a-dseadsfjqujt"),
+    _authfail("MzM4ZjNhYTk5YjE4@192.0.2.4", "REGISTER"),
+    STORED_INVITE_AUTHFAIL,
+    STORED_REGISTER_AUTHFAIL,
+    "fevigort37u6sbhqkm2p9396@203.0.113.7 INVITE-1 Malformed SIP request",
+])
+def test_v7_call_id_fold_is_idempotent(collector, raw):
+    once = _template(collector, raw)
+    assert collector.mask(once) == once
+
+
+def test_v7_masking_version(collector):
+    assert collector.MASKING_VERSION == 7

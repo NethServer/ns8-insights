@@ -249,7 +249,14 @@ def sanitize_line(raw):
 # deploy this version before the server's LLM_MAX_CONCURRENCY limit and
 # its daily spend cap are live -- without them a fleet-wide simultaneous
 # novelty burst is an unbounded LLM bill, not a one-time blip.
-MASKING_VERSION = 6
+#
+# 7: a SIP Call-ID that still holds literal text after the rules becomes
+# <ID>, both in a callid= field and as kamailio's "$ci $rm-$cs" prefix
+# (see _fold_sip_call_ids). Some user agents mint a Call-ID as
+# <hex>-<random letters>; the hex rule took the first part and left the
+# letters, so every nethvoice-proxy INVITE auth failure was a new template:
+# "[SECURITY-AUTHFAIL] <HEX>-dseadsfjqujt INVITE-<NUM> ... callid=<HEX>-...".
+MASKING_VERSION = 7
 
 # Placeholders already present in the input are left alone, which is what
 # makes mask() idempotent. Listed here so one rule can protect all of them.
@@ -475,6 +482,54 @@ FOLD_RULES = [
         r'\1<ID>',
     ),
 ]
+
+# The unquoted SIP Call-ID kamailio logs in a callid= field and as the
+# "$ci $rm-$cs" xlog prefix -- the Call-ID, then the method and the CSeq
+# number. nethvoice-proxy's auth failure line carries both:
+#
+#   [SECURITY-AUTHFAIL] 3a4f9c2d81e07b6a-dseadsfjqujt INVITE-1 - ...
+#       callid=3a4f9c2d81e07b6a-dseadsfjqujt
+#
+# Some user agents mint a Call-ID as <hex>-<random letters>; the rules mask
+# the hex and leave the letters, one template per call. Not a FOLD_RULES
+# entry, for two reasons. Whether a value leaks is known only after the
+# rules: the REGISTER form "MzM4ZjNhYTk5YjE4@192.0.2.4" ends up <ID>@<IP>,
+# fully masked, and keeps that template. And the value is replaced wherever
+# it occurs as a whole token, which one pattern cannot do: the prefix is the
+# same Call-ID as the field.
+#
+# The field is found by its name and the prefix by the SIP method and CSeq
+# that follow it, never by the value's shape: a "word after <HEX>-" rule
+# would also take <HEX>-infra and every other stable suffix of a masked id.
+# A line with no callid= field -- "fevigort37u6sbhqkm2p9396@<IP> INVITE-<NUM>
+# Malformed SIP request" -- has only the prefix, and there a token is taken
+# only if it holds a digit or a placeholder, as a Call-ID does and a label
+# such as "[SECURITY-AUTHFAIL]" does not.
+_SIP_CALL_ID_FIELD = re.compile(r'\bcall-?id=([^\s,;]+)', re.IGNORECASE)
+_SIP_CALL_ID_PREFIX = re.compile(
+    r'(?<!\S)[^\s,;]+(?= (?:ACK|BYE|CANCEL|INFO|INVITE|MESSAGE|NOTIFY|OPTIONS'
+    r'|PRACK|PUBLISH|REFER|REGISTER|SUBSCRIBE|UPDATE)-<NUM>(?!\S))'
+)
+_LITERAL = re.compile(r'[A-Za-z0-9]')
+
+
+def _fold_sip_call_ids(line):
+    """Replace every SIP Call-ID that still holds literal text with <ID>.
+
+    A value that is only placeholders and punctuation is already masked and
+    left alone, so the result is a fixed point.
+    """
+    values = {m.group(1) for m in _SIP_CALL_ID_FIELD.finditer(line)}
+    values.update(
+        m.group(0) for m in _SIP_CALL_ID_PREFIX.finditer(line)
+        if _PROTECTED.search(m.group(0)) or re.search(r'\d', m.group(0))
+    )
+    for value in sorted(values, key=len, reverse=True):
+        if not _LITERAL.search(_PROTECTED.sub('', value)):
+            continue
+        line = re.sub(r'(?<![^\s,;=])' + re.escape(value) + r'(?![^\s,;])',
+                      '<ID>', line)
+    return line
 
 MASKING_RULES = [
     # 1. Volatile paths. Before any number rule, or /proc/12345 loses its
@@ -832,6 +887,7 @@ def mask(line):
         rest = pattern.sub(replacement, rest)
     for pattern, replacement in MASKING_RULES:
         rest = _mask_apply(pattern, replacement, rest)
+    rest = _fold_sip_call_ids(rest)
     rest = _REPEATED_PLACEHOLDER.sub(r'\1', rest)
     return prefix + rest
 
