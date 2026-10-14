@@ -880,5 +880,38 @@ def test_v8_user_fold_is_idempotent(collector, raw):
     assert collector.mask(once) == once
 
 
-def test_v8_masking_version(collector):
-    assert collector.MASKING_VERSION == 8
+# --------------------------------------------------------------------------
+# Masking version 9: a nethcti account name with spaces. "user maria
+# maria rossi is not configured" kept every word after the first, so
+# each person's full name reached the server and made its own template.
+# --------------------------------------------------------------------------
+
+NOT_CONFIGURED = (
+    "<3> [nethvoice] 2026-10-14T08:00:00.000Z - warn: [plugins_rest/authentication] "
+    "send HTTP 401 response to 203.0.113.7:51234 with message "
+    "\"user {} is not configured\""
+)
+NOT_CONFIGURED_TEMPLATE = (
+    "<3> [nethvoice] <TS> - warn: [plugins_rest/authentication] "
+    "send HTTP <NUM> response to <IP>:<PORT> with message "
+    "\"user <USER> is not configured\""
+)
+
+
+@pytest.mark.parametrize("account", ["anna maria rossi", "maria rossi", "rossi", "201"])
+def test_v9_user_not_configured_is_masked(collector, account):
+    assert _template(collector, NOT_CONFIGURED.format(account)) == NOT_CONFIGURED_TEMPLATE
+
+
+@pytest.mark.parametrize("stored", [
+    "warn: [plugins_rest/authentication] user <USER> maria rossi is not configured",
+    "warn: [plugins_rest/authentication] user <USER> rossi is not configured",
+])
+def test_v9_stored_user_not_configured_is_masked(collector, stored):
+    expected = "warn: [plugins_rest/authentication] user <USER> is not configured"
+    assert collector.mask(stored) == expected
+    assert collector.mask(expected) == expected
+
+
+def test_v9_masking_version(collector):
+    assert collector.MASKING_VERSION == 9

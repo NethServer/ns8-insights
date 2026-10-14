@@ -263,7 +263,11 @@ def sanitize_line(raw):
 # template with the name in clear. And a user field whose value earlier
 # rules masked becomes <USER> (see _fold_user_values), so
 # "sasl_username=<HOST>" and kamailio's "user=<HEX>" join the plain names.
-MASKING_VERSION = 8
+#
+# 9: nethcti's "user <name> is not configured" folds the whole name. It is
+# a display name of several words, and rule 14 took only the first, so the
+# person's full name reached the server and made a template per person.
+MASKING_VERSION = 9
 
 # Placeholders already present in the input are left alone, which is what
 # makes mask() idempotent. Listed here so one rule can protect all of them.
@@ -475,6 +479,14 @@ FOLD_RULES = [
     (
         re.compile(r'(authorized successfully \([^)]*\) to )"[^"]*"'),
         r'\1"<USER>"',
+    ),
+    # nethcti's "user <name> is not configured": the name is the display
+    # name, often several words, and rule 14 takes only the first. Stops at
+    # a quote, so it stays inside the HTTP response message, and at 64
+    # characters, so it cannot eat a whole sentence.
+    (
+        re.compile(r'(\buser )[^"]{1,64}?( is not configured)'),
+        r'\1<USER>\2',
     ),
     (
         re.compile(r'(\bws connection from )\S+'),
