@@ -1091,9 +1091,9 @@ def test_v13_stored_user_placeholder_is_folded(collector, stored, expected):
     assert collector.mask(stored) == expected
 
 
-def test_v13_sshd_empty_user_address_is_kept(collector):
+def test_v13_user_address_is_not_folded(collector):
     line = "<6> [sshd-session] Connection closed by invalid user <IP> port <NUM> [preauth]"
-    assert collector.mask(line) == line
+    assert collector._fold_user_values(line) == line
 
 
 # --------------------------------------------------------------------------
@@ -1242,5 +1242,40 @@ def test_v19_mariadb_timestamp_is_masked(collector, ts):
     assert collector.mask(template) == template
 
 
-def test_v19_masking_version(collector):
-    assert collector.MASKING_VERSION == 19
+# --------------------------------------------------------------------------
+# Masking version 20: sshd's "invalid user", also with an empty name.
+# --------------------------------------------------------------------------
+
+@pytest.mark.parametrize("raw, expected", [
+    ("<6> [sshd-session] Invalid user {u} from 203.0.113.5 port 22",
+     "<6> [sshd-session] Invalid user <USER> from <IP> port <NUM>"),
+    ("<6> [sshd-session] Connection closed by invalid user {u} 203.0.113.5 port 22 [preauth]",
+     "<6> [sshd-session] Connection closed by invalid user <USER> <IP> port <NUM> [preauth]"),
+    ("<6> [sshd-session] Disconnected from invalid user {u} 203.0.113.5 port 22 [preauth]",
+     "<6> [sshd-session] Disconnected from invalid user <USER> <IP> port <NUM> [preauth]"),
+    ("<3> [sshd-session] error: maximum authentication attempts exceeded for "
+     "invalid user {u} from 203.0.113.5 port 22 ssh2 [preauth]",
+     "<3> [sshd-session] error: maximum authentication attempts exceeded for "
+     "invalid user <USER> from <IP> port <NUM> ssh2 [preauth]"),
+])
+@pytest.mark.parametrize("user", ["alice", "", "alice.example.com"])
+def test_v20_sshd_invalid_user_is_masked(collector, raw, expected, user):
+    template = _template(collector, raw.format(u=user))
+    assert template == expected
+    assert collector.mask(template) == template
+
+
+def test_v20_sshd_user_called_from_is_masked(collector):
+    raw = "<6> [sshd-session] Invalid user from from 203.0.113.5 port 22"
+    assert _template(collector, raw) == (
+        "<6> [sshd-session] Invalid user <USER> from <IP> port <NUM>")
+
+
+def test_v20_stored_sshd_empty_user_is_masked(collector):
+    stored = "<6> [sshd-session] Connection closed by invalid user <IP> port <NUM> [preauth]"
+    assert collector.mask(stored) == (
+        "<6> [sshd-session] Connection closed by invalid user <USER> <IP> port <NUM> [preauth]")
+
+
+def test_v20_masking_version(collector):
+    assert collector.MASKING_VERSION == 20
