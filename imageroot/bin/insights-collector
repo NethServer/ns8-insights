@@ -281,7 +281,13 @@ def sanitize_line(raw):
 # <USER>. A dotted name or an address was <HOST> or <redacted-email> by
 # the time rule 14 ran, so rule 14 took only the opening quote and left
 # <USER><HOST>": one problem split into a template per name shape.
-MASKING_VERSION = 12
+#
+# 13: rule 14 leaves the punctuation after a name, and "user <HOST>" folds
+# to "user <USER>" like "user=<HOST>" does. nethcti-middleware writes
+# "authorization failed for user alice: missing ...": rule 14 ate the
+# colon of a plain name, while a dotted name kept it as "<HOST>:", so one
+# line made two templates.
+MASKING_VERSION = 13
 
 # Placeholders already present in the input are left alone, which is what
 # makes mask() idempotent. Listed here so one rule can protect all of them.
@@ -559,12 +565,23 @@ _USER_VALUE = re.compile(
     r'(?i)(?<![a-z0-9])(user(?:name)?)\s*([=:])\s*'
     r'(?!<USER>(?=[\s,;)]|$))(?:' + _PLACEHOLDER + r'|[@.+-])+(?=[\s,;)]|$)')
 
+# The same for rule 14's "user name" shape. Only the placeholders an
+# account can turn into, so "invalid user <IP>" -- sshd's empty name -- is
+# left alone, and the value must end with one, so the punctuation after it
+# stays outside, as rule 14 leaves it.
+_USER_WORD_PLACEHOLDER = r'<(?:USER|HOST|HEX|NUM|ID|UUID|redacted-email)>'
+_USER_WORD_VALUE = re.compile(
+    r'(?i)(?<![a-z0-9])(user(?:name)?) ((?:' + _USER_WORD_PLACEHOLDER +
+    r')(?:[@.+-]*' + _USER_WORD_PLACEHOLDER + r')*)(?=[\s.:,;!?)"\']|$)')
+
 
 def _fold_user_values(line):
-    """Spaced like rules 13 and 14b: "name=<USER>", "name: <USER>"."""
-    return _USER_VALUE.sub(
+    """Spaced like rules 13, 14 and 14b: "name=<USER>", "name <USER>",
+    "name: <USER>"."""
+    line = _USER_VALUE.sub(
         lambda m: m.group(1) + ('=' if m.group(2) == '=' else ': ') + '<USER>',
         line)
+    return _USER_WORD_VALUE.sub(lambda m: m.group(1) + ' <USER>', line)
 
 
 # The unquoted SIP Call-ID kamailio logs in a callid= field and as the
@@ -867,9 +884,11 @@ MASKING_RULES = [
     ),
     # 14. The same, written "user name" with whitespace instead of "=". The
     #     (?!<) guard on both rules is what stops a second mask() pass
-    #     from rewriting <USER> into <<USER>>.
+    #     from rewriting <USER> into <<USER>>. Punctuation that ends the
+    #     name -- "user alice: missing", "user alice." -- stays, as it does
+    #     after a name that an earlier rule masked.
     (
-        re.compile(r'(?i)\b(user(?:name)?)\s+(?!<)\S+'),
+        re.compile(r'(?i)\b(user(?:name)?)\s+(?!<)\S+?(?=[.:,;!?)"\']*(?:\s|$))'),
         r'\1 <USER>',
     ),
     # 14b. The same, written "user: name" -- nethcti's "(user: alessandro)".

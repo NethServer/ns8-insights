@@ -1051,5 +1051,50 @@ def test_v12_quoted_user_keeps_what_follows(collector):
         "streaming authorization failed for user <USER>!")
 
 
-def test_v12_masking_version(collector):
-    assert collector.MASKING_VERSION == 12
+
+# --------------------------------------------------------------------------
+# Masking version 13: rule 14 leaves the punctuation after a name, and
+# "user <HOST>" folds to "user <USER>".
+# --------------------------------------------------------------------------
+
+STT = ("<3> [nethvoice5] nethcti-middleware middleware.go:42: [AUTH][ERROR] "
+       "authorization failed for user {u}: missing or insufficient capability "
+       "nethvoice_cti.satellite_stt")
+
+
+@pytest.mark.parametrize("user", [
+    "alice", "alice.rossi", "alice@example.com", "201", "a1b2c3d4e5",
+])
+def test_v13_user_keeps_the_colon_after_it(collector, user):
+    template = _template(collector, STT.format(u=user))
+    assert template == (
+        "<3> [nethvoice] nethcti-middleware middleware.go:<NUM>: [AUTH][ERROR] "
+        "authorization failed for user <USER>: missing or insufficient "
+        "capability nethvoice_cti.satellite_stt")
+    assert collector.mask(template) == template
+
+
+@pytest.mark.parametrize("user", ["alice", "alice.rossi"])
+def test_v13_user_keeps_the_full_stop_after_it(collector, user):
+    assert _template(collector, f"authorization success for user {user}. GET /x") == (
+        "authorization success for user <USER>. GET /x")
+
+
+@pytest.mark.parametrize("stored, expected", [
+    ("authorization failed for user <HOST>: missing",
+     "authorization failed for user <USER>: missing"),
+    ("authorization success for user <HOST>. GET /x",
+     "authorization success for user <USER>. GET /x"),
+    ("no user <USER><HOST> is present", "no user <USER> is present"),
+])
+def test_v13_stored_user_placeholder_is_folded(collector, stored, expected):
+    assert collector.mask(stored) == expected
+
+
+def test_v13_sshd_empty_user_address_is_kept(collector):
+    line = "<6> [sshd-session] Connection closed by invalid user <IP> port <NUM> [preauth]"
+    assert collector.mask(line) == line
+
+
+def test_v13_masking_version(collector):
+    assert collector.MASKING_VERSION == 13
