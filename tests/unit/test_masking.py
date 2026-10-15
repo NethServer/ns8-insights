@@ -1096,5 +1096,33 @@ def test_v13_sshd_empty_user_address_is_kept(collector):
     assert collector.mask(line) == line
 
 
-def test_v13_masking_version(collector):
-    assert collector.MASKING_VERSION == 13
+# --------------------------------------------------------------------------
+# Masking version 14: nethcti's "convid" folds to <ID>.
+# --------------------------------------------------------------------------
+
+HANGUP = ("<3> [nethvoice5] 2026-10-15T10:11:12.123Z - warn: [plugins_rest/astproxy] "
+          "hangup convid {c} by user alice with 201 has been failed")
+
+
+@pytest.mark.parametrize("convid", [
+    "PJSIP/201-0000a1b2>",
+    "PJSIP/201-0000a1b2>PJSIP/202-0000a1b3",
+    "PJSIP/201-0000a1b2>Local/202@from-internal-0000a1b4;1",
+    "Local/202@from-queue-0000a1b4;2>PJSIP/201-0000a1b2",
+])
+def test_v14_convid_is_masked(collector, convid):
+    template = _template(collector, HANGUP.format(c=convid))
+    assert template == (
+        "<3> [nethvoice] <TS> - warn: [plugins_rest/astproxy] hangup convid "
+        "<ID> by user <USER> with <NUM> has been failed")
+    assert collector.mask(template) == template
+
+
+def test_v14_quoted_convid_keeps_quotes(collector):
+    raw = 'force hangup convid "PJSIP/201-0000a1b2>" by user alice with extension 201'
+    assert _template(collector, raw) == (
+        'force hangup convid "<ID>" by user <USER> with extension <NUM>')
+
+
+def test_v14_masking_version(collector):
+    assert collector.MASKING_VERSION == 14

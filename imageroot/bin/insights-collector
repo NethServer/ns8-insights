@@ -287,7 +287,11 @@ def sanitize_line(raw):
 # "authorization failed for user alice: missing ...": rule 14 ate the
 # colon of a plain name, while a dotted name kept it as "<HOST>:", so one
 # line made two templates.
-MASKING_VERSION = 13
+#
+# 14: nethcti's "convid", the channel pair of a call, folds to <ID>. It
+# is "PJSIP/201-0000a1b2>" while the call rings and gains the other leg
+# later, so one failed hangup made a template per call state.
+MASKING_VERSION = 14
 
 # Placeholders already present in the input are left alone, which is what
 # makes mask() idempotent. Listed here so one rule can protect all of them.
@@ -514,6 +518,14 @@ FOLD_RULES = [
     (
         re.compile(r'(?i)(\buser(?:name)? )"[^"]{1,64}"'),
         r'\1<USER>',
+    ),
+    # nethcti's conversation id, the call's channels joined by ">":
+    # "PJSIP/201-0000a1b2>PJSIP/202-0000a1b3", or only the first leg while
+    # the call rings. Quoted in some messages; the quotes are kept.
+    # Re-matches its own output.
+    (
+        re.compile(r'(\bconvid )("?)[^"\s]+\2(?=\s|$)'),
+        r'\1\2<ID>\2',
     ),
     (
         re.compile(r'(\bws connection from )\S+'),
