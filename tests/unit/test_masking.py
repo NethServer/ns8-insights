@@ -1306,5 +1306,49 @@ def test_v21_stored_ssh_fingerprint_is_masked(collector, stored):
     assert collector.mask(stored) == "ssh2: RSA SHA256:<ID>"
 
 
-def test_v21_masking_version(collector):
-    assert collector.MASKING_VERSION == 21
+# --------------------------------------------------------------------------
+# Masking version 22: rclone-gateway's HAProxy names and durations in ms.
+# --------------------------------------------------------------------------
+
+GW_DOWN = ("<3> [rclone-gateway] Server gw_b2_{b}/gw{n} is DOWN, reason: {r}, "
+           "check duration: {d}ms. 0 active and 0 backup servers left.")
+
+
+@pytest.mark.parametrize("backend, number, duration", [
+    ("dfe8f881", "3", "1"), ("fa299864", "1", "12"), ("a2f82897", "6", "60006"),
+])
+def test_v22_gateway_server_down_is_masked(collector, backend, number, duration):
+    raw = GW_DOWN.format(b=backend, n=number, d=duration,
+                         r="Layer4 connection problem")
+    template = _template(collector, raw)
+    assert template == (
+        "<3> [rclone-gateway] Server gw_b2_<HEX>/gw<NUM> is DOWN, reason: "
+        "Layer4 connection problem, check duration: <NUM>ms. <NUM> active "
+        "and <NUM> backup servers left.")
+    assert collector.mask(template) == template
+
+
+def test_v22_gateway_reason_is_kept(collector):
+    layer4 = _template(collector, GW_DOWN.format(
+        b="dfe8f881", n="2", d="1", r="Layer4 connection problem"))
+    layer7 = _template(collector, GW_DOWN.format(
+        b="dfe8f881", n="2", d="1", r="Layer7 timeout"))
+    assert layer4 != layer7
+
+
+def test_v22_stored_gateway_server_is_masked(collector):
+    assert collector.mask("Server gw_b2_dfe8f881/gw3 is DOWN, check duration: 60006ms.") == (
+        "Server gw_b2_<HEX>/gw<NUM> is DOWN, check duration: <NUM>ms.")
+
+
+@pytest.mark.parametrize("raw, expected", [
+    ("Timeout was 5000ms (~5s)", "Timeout was <NUM>ms (~5s)"),
+    ("took 1.5ms", "took <NUM>ms"),
+    ("snapshot_20261015ab done", "snapshot_<HEX> done"),
+])
+def test_v22_milliseconds_and_hex_after_underscore(collector, raw, expected):
+    assert collector.mask(raw) == expected
+
+
+def test_v22_masking_version(collector):
+    assert collector.MASKING_VERSION == 22

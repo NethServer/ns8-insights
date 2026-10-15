@@ -327,7 +327,14 @@ def sanitize_line(raw):
 # scrub()'s blob rule stops at "/", so a fingerprint was cut wherever its
 # "/" fell -- "SHA256:bhkx0O+KmrZz/<ID>", "SHA256:<redacted-blob>" -- and
 # each key that logged in made its own template.
-MASKING_VERSION = 21
+#
+# 22: HAProxy's backend and server names in rclone-gateway, and durations
+# in milliseconds. "Server gw_b2_dfe8f881/gw3 is DOWN ... check duration:
+# 1ms": the hex rule needed a word boundary, which "_" is not, the server
+# number named one of several equal servers, and nothing masked "1ms".
+# One outage made a template per backend, server and duration. Now
+# "gw_b2_<HEX>/gw<NUM>" and "<NUM>ms".
+MASKING_VERSION = 22
 
 # Placeholders already present in the input are left alone, which is what
 # makes mask() idempotent. Listed here so one rule can protect all of them.
@@ -528,6 +535,13 @@ FOLD_RULES = [
     (
         re.compile(r'(\bSHA256:)(?:[A-Za-z0-9+/=]|<redacted-blob>|<ID>)+'),
         r'\1<ID>',
+    ),
+    # rclone-gateway's HAProxy servers, "gw_b2_dfe8f881/gw3": the number
+    # picks one of a backend's equal servers. Also takes the masked
+    # backend name, so stored lines fold too, and its own output.
+    (
+        re.compile(r'(\bgw_[\w<>]+/gw)\d+\b'),
+        r'\1<NUM>',
     ),
     # systemd-coredump's stack trace: frame count and addresses differ on
     # every crash. The process name before it is the signal and is kept.
@@ -955,9 +969,11 @@ MASKING_RULES = [
     ),
     # 12. Hex runs. After UUID and IPv6. Eight is the shortest run that is
     #     more often a checksum than a word: "cafe" and "deadbeef" both
-    #     exist in prose, but eight-plus hex characters rarely do.
+    #     exist in prose, but eight-plus hex characters rarely do. A "_"
+    #     before the run counts as a boundary, so HAProxy's backend
+    #     "gw_b2_dfe8f881" folds too.
     (
-        re.compile(r'\b(?=[0-9a-fA-F]*\d)[0-9a-fA-F]{8,}\b'),
+        re.compile(r'(?:\b|(?<=_))(?=[0-9a-fA-F]*\d)[0-9a-fA-F]{8,}\b'),
         '<HEX>',
     ),
     # 13. Account names in authentication messages, written as "user=name"
@@ -1052,6 +1068,13 @@ MASKING_RULES = [
     (
         re.compile(r'\d+\.\d+'),
         '<NUM>',
+    ),
+    # 18b. Durations in milliseconds, "check duration: 60006ms". The unit
+    #      sticks to the digits, so rules 19 and 20 never see them. After
+    #      rule 18, which already made "1.5ms" into "<NUM>ms".
+    (
+        re.compile(r'\b\d+ms\b'),
+        '<NUM>ms',
     ),
     # 19. Bare integers, two digits or more. Left at \d{2,} rather than
     #     \d+: lone digits are handled separately by rule 20 below, and
