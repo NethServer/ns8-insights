@@ -1183,5 +1183,23 @@ def test_v16_stored_postlogin_pid_is_masked(collector, pid):
     assert collector.mask(stored) == "<3> [dovecot] imap-postlogin: Error: <PID>impersonated login"
 
 
-def test_v16_masking_version(collector):
-    assert collector.MASKING_VERSION == 16
+# --------------------------------------------------------------------------
+# Masking version 17: the file name in tancredi's "Template not found".
+# --------------------------------------------------------------------------
+
+@pytest.mark.parametrize("name", [
+    "fanvil_x5u_v2_hwv2_0.txt", "y000000000124.cfg", "001565a1b2c3.xml",
+    "phone.example.com",
+])
+def test_v17_tancredi_template_name_is_masked(collector, name):
+    raw = (f'<3> [nethvoice5] [2026-10-15 10:11:12] tancredi.ERROR: Template '
+           f'not found for "{name}". It does not match our patterns.d/ rules')
+    template = _template(collector, raw)
+    assert template == (
+        '<3> [nethvoice] [<TS>] <HOST>: Template not found for "<PATH>". '
+        'It does not match our patterns.d/ rules')
+    assert collector.mask(template) == template
+
+
+def test_v17_masking_version(collector):
+    assert collector.MASKING_VERSION == 17

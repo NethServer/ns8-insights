@@ -301,7 +301,11 @@ def sanitize_line(raw):
 # <12345>impersonated login ...", becomes <PID>. It stayed in clear up to
 # four digits and became <HEX> with five or six, so the same line made a
 # template per process.
-MASKING_VERSION = 16
+#
+# 17: the file name in tancredi's 'Template not found for "<file>"'
+# becomes <PATH>. A phone asks for a file named after its model or its
+# MAC, so one missing template made a template per phone model.
+MASKING_VERSION = 17
 
 # Placeholders already present in the input are left alone, which is what
 # makes mask() idempotent. Listed here so one rule can protect all of them.
@@ -466,6 +470,13 @@ FOLD_RULES = [
         re.compile(r'(\b(?:Serving|Invalid token) request from \S+ <UA>: '
                    r'(?:https?://[^/\s]+)?/[^/\s]+)/\S+'),
         r'\1/<PATH>',
+    ),
+    # The file a phone asked tancredi for, named after its model or its
+    # MAC: 'Template not found for "fanvil_x5u_v2_hwv2_0.txt"'. Re-matches
+    # its own output.
+    (
+        re.compile(r'(\bTemplate not found for )"[^"]*"'),
+        r'\1"<PATH>"',
     ),
     # systemd-coredump's stack trace: frame count and addresses differ on
     # every crash. The process name before it is the signal and is kept.
