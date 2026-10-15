@@ -334,7 +334,12 @@ def sanitize_line(raw):
 # number named one of several equal servers, and nothing masked "1ms".
 # One outage made a template per backend, server and duration. Now
 # "gw_b2_<HEX>/gw<NUM>" and "<NUM>ms".
-MASKING_VERSION = 22
+#
+# 23: Apache's error lines drop the ", referer: <url>" the client sent,
+# and its "script '<path>' not found" keeps the directory but folds the
+# file to <PATH>. Both come from whoever made the request: every scanner
+# run made new templates of one probe.
+MASKING_VERSION = 23
 
 # Placeholders already present in the input are left alone, which is what
 # makes mask() idempotent. Listed here so one rule can protect all of them.
@@ -542,6 +547,19 @@ FOLD_RULES = [
     (
         re.compile(r'(\bgw_[\w<>]+/gw)\d+\b'),
         r'\1<NUM>',
+    ),
+    # Apache's error log ends a line with the Referer header the client
+    # sent, if any. Only on lines with Apache's "[client <address>]" field.
+    (
+        re.compile(r'^(.*\[client [^\]]+\] .*), referer: \S*$'),
+        r'\1',
+    ),
+    # The script a client asked for and Apache could not find: a scanner
+    # tries a list of names. The directory is kept, it tells which site
+    # was probed. Re-matches its own output.
+    (
+        re.compile(r"(\bscript '[^']*/)[^'/]+(' not found or unable to stat)"),
+        r'\1<PATH>\2',
     ),
     # systemd-coredump's stack trace: frame count and addresses differ on
     # every crash. The process name before it is the signal and is kept.

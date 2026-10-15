@@ -1350,5 +1350,34 @@ def test_v22_milliseconds_and_hex_after_underscore(collector, raw, expected):
     assert collector.mask(raw) == expected
 
 
-def test_v22_masking_version(collector):
-    assert collector.MASKING_VERSION == 22
+# --------------------------------------------------------------------------
+# Masking version 23: Apache's referer and the probed script name.
+# --------------------------------------------------------------------------
+
+PROBE = ("<3> [freepbx5] [Wed Oct 15 10:11:12.123456 2026] [php7:error] "
+         "[pid 1234:tid 5678] [client 203.0.113.5:4444] script "
+         "'/var/www/html/freepbx/wizard/{s}' not found or unable to stat{r}")
+
+
+@pytest.mark.parametrize("script, referer", [
+    ("xmlrpc.php", ", referer: https://example.com//wp-login.php"),
+    ("check.php", ", referer: http://example.com/check.php"),
+    ("as.php", ""),
+    ("phpinfo.php", ", referer: https://example.com/"),
+])
+def test_v23_apache_probe_is_masked(collector, script, referer):
+    template = _template(collector, PROBE.format(s=script, r=referer))
+    assert template == (
+        "<3> [freepbx] [<TS>] [php7:error] [pid <PID>:tid <NUM>] "
+        "[client <IP>:<PORT>] script '/var/www/html/freepbx/wizard/<PATH>' "
+        "not found or unable to stat")
+    assert collector.mask(template) == template
+
+
+def test_v23_referer_is_kept_outside_apache(collector):
+    line = "login failed, referer: https://<HOST>/"
+    assert collector.mask(line) == line
+
+
+def test_v23_masking_version(collector):
+    assert collector.MASKING_VERSION == 23
