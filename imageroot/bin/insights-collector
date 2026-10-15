@@ -310,7 +310,13 @@ def sanitize_line(raw):
 # conflicting extensions. The list after it names what uses each one --
 # "INUSE: Queue: <queue name>" -- and customers name queues after
 # people: the names reached the server in clear, a template per name.
-MASKING_VERSION = 18
+#
+# 19: an ISO-8601 timestamp with a one-digit hour, "2026-10-15  9:11:12",
+# becomes <TS>. MariaDB pads the hour with a space, which sanitize_line()
+# squeezes, so before ten o'clock every MariaDB line became five numbers
+# that merged into "<NUM>-<NUM>-<NUM>:<NUM>:<NUM>": a second template for
+# the same warning.
+MASKING_VERSION = 19
 
 # Placeholders already present in the input are left alone, which is what
 # makes mask() idempotent. Listed here so one rule can protect all of them.
@@ -725,9 +731,11 @@ MASKING_RULES = [
         '<MAC>',
     ),
     # 2. ISO-8601 timestamps. Before clock times, which are a prefix of them.
+    #    The hour may have one digit: MariaDB pads it with a space instead
+    #    of a zero, "2026-10-15  9:11:12".
     (
         re.compile(
-            r'\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}'
+            r'\d{4}-\d{2}-\d{2}[T ]\d{1,2}:\d{2}:\d{2}'
             r'(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?'
         ),
         '<TS>',

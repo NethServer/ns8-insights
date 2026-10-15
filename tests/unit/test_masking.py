@@ -1223,5 +1223,24 @@ def test_v18_xtnconflict_names_are_masked(collector, queue):
     assert collector.mask(template) == template
 
 
-def test_v18_masking_version(collector):
-    assert collector.MASKING_VERSION == 18
+# --------------------------------------------------------------------------
+# Masking version 19: an ISO-8601 timestamp with a one-digit hour.
+# --------------------------------------------------------------------------
+
+ABORTED = ("<3> [nethvoice5] {ts} 123 [Warning] Aborted connection 123 to db: "
+           "'asteriskcdrdb' user: 'cdr' host: '10.0.0.5' (Got timeout reading "
+           "communication packets)")
+
+
+@pytest.mark.parametrize("ts", ["2026-10-15  9:11:12", "2026-10-15 10:11:12"])
+def test_v19_mariadb_timestamp_is_masked(collector, ts):
+    template = _template(collector, ABORTED.format(ts=ts))
+    assert template == (
+        "<3> [nethvoice] <TS> <NUM> [Warning] Aborted connection <NUM> to db: "
+        "'asteriskcdrdb' user: <USER> host: '<IP>' (Got timeout reading "
+        "communication packets)")
+    assert collector.mask(template) == template
+
+
+def test_v19_masking_version(collector):
+    assert collector.MASKING_VERSION == 19
