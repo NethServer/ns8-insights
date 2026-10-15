@@ -276,7 +276,12 @@ def sanitize_line(raw):
 # 11: the mailbox directory "/var/lib/vmail/<name>" folds the account to
 # <USER>. A sieve error names the script path, so the name reached the
 # server in clear even with the dovecot prefix masked.
-MASKING_VERSION = 11
+#
+# 12: nethcti's quoted user name, 'by user "alice.rossi"', folds whole to
+# <USER>. A dotted name or an address was <HOST> or <redacted-email> by
+# the time rule 14 ran, so rule 14 took only the opening quote and left
+# <USER><HOST>": one problem split into a template per name shape.
+MASKING_VERSION = 12
 
 # Placeholders already present in the input are left alone, which is what
 # makes mask() idempotent. Listed here so one rule can protect all of them.
@@ -496,6 +501,13 @@ FOLD_RULES = [
     (
         re.compile(r'(\buser )[^"]{1,64}?( is not configured)'),
         r'\1<USER>\2',
+    ),
+    # nethcti quotes the account in most of its warnings: 'by user
+    # "alice.rossi" (undefined)'. Folded whole, quotes included, so the
+    # template matches the one rule 14 makes of a plain 'user alice'.
+    (
+        re.compile(r'(?i)(\buser(?:name)? )"[^"]{1,64}"'),
+        r'\1<USER>',
     ),
     (
         re.compile(r'(\bws connection from )\S+'),

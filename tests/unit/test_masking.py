@@ -1026,5 +1026,30 @@ def test_v11_stored_sieve_error_is_masked(collector):
         "may reveal additional details)")
 
 
-def test_v11_masking_version(collector):
-    assert collector.MASKING_VERSION == 11
+
+# --------------------------------------------------------------------------
+# Masking version 12: nethcti's quoted user name folds whole to <USER>.
+# --------------------------------------------------------------------------
+
+TAKEOVER = ("<3> [nethvoice5] 2026-10-15T10:11:12.123Z - warn: [com_nethcti_ws] "
+            "no ack for login takeOver procedure recv by user {u} (undefined)")
+
+
+@pytest.mark.parametrize("user", [
+    'alice', '"alice"', '"alice.rossi"', '"alice@example.com"',
+])
+def test_v12_quoted_nethcti_user_is_masked(collector, user):
+    template = _template(collector, TAKEOVER.format(u=user))
+    assert template == (
+        "<3> [nethvoice] <TS> - warn: [com_nethcti_ws] no ack for login "
+        "takeOver procedure recv by user <USER> (undefined)")
+    assert collector.mask(template) == template
+
+
+def test_v12_quoted_user_keeps_what_follows(collector):
+    assert _template(collector, 'streaming authorization failed for user "alice.rossi"!') == (
+        "streaming authorization failed for user <USER>!")
+
+
+def test_v12_masking_version(collector):
+    assert collector.MASKING_VERSION == 12
