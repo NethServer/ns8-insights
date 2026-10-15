@@ -291,7 +291,12 @@ def sanitize_line(raw):
 # 14: nethcti's "convid", the channel pair of a call, folds to <ID>. It
 # is "PJSIP/201-0000a1b2>" while the call rings and gains the other leg
 # later, so one failed hangup made a template per call state.
-MASKING_VERSION = 14
+#
+# 15: the prefix Go's log package writes, "2026/10/15 10:11:12 logs.go:42: "
+# or only "middleware.go:42: ", is dropped. nethcti-middleware writes one
+# or the other depending on its version, and moves messages between
+# files, so the same message made a template per release.
+MASKING_VERSION = 15
 
 # Placeholders already present in the input are left alone, which is what
 # makes mask() idempotent. Listed here so one rule can protect all of them.
@@ -497,6 +502,17 @@ FOLD_RULES = [
     (
         re.compile(r'\b\d+_\d{5,}@'),
         '<ID>@',
+    ),
+    # The prefix of Go's log package: an optional "yyyy/mm/dd hh:mm:ss"
+    # date and the "file.go:line: " that wrote the line. Both depend on the
+    # build -- nethcti-middleware dropped the date and moved its messages
+    # from logs.go to middleware.go -- and the message after them is the
+    # signal. Also takes the masked form, so stored lines fold too.
+    (
+        re.compile(r'(?<!\S)(?:(?:\d{4}|<NUM>)/(?:\d{2}|<NUM>)/(?:\d{2}|<NUM>) '
+                   r'(?:\d{2}:\d{2}:\d{2}(?:\.\d+)?|<TS>) )?'
+                   r'[\w-]+\.go:(?:\d+|<NUM>): '),
+        '',
     ),
     # nethcti user names and socket.io session ids. The account is in the
     # retained sample line, the same trade rules 13 and 14 make.

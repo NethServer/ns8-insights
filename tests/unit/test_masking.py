@@ -1068,7 +1068,7 @@ STT = ("<3> [nethvoice5] nethcti-middleware middleware.go:42: [AUTH][ERROR] "
 def test_v13_user_keeps_the_colon_after_it(collector, user):
     template = _template(collector, STT.format(u=user))
     assert template == (
-        "<3> [nethvoice] nethcti-middleware middleware.go:<NUM>: [AUTH][ERROR] "
+        "<3> [nethvoice] nethcti-middleware [AUTH][ERROR] "
         "authorization failed for user <USER>: missing or insufficient "
         "capability nethvoice_cti.satellite_stt")
     assert collector.mask(template) == template
@@ -1124,5 +1124,40 @@ def test_v14_quoted_convid_keeps_quotes(collector):
         'force hangup convid "<ID>" by user <USER> with extension <NUM>')
 
 
-def test_v14_masking_version(collector):
-    assert collector.MASKING_VERSION == 14
+# --------------------------------------------------------------------------
+# Masking version 15: Go's log prefix, date and "file.go:line: ", is dropped.
+# --------------------------------------------------------------------------
+
+@pytest.mark.parametrize("prefix", [
+    "2026/10/15 10:11:12 logs.go:42: ",
+    "2026/10/15 10:11:12.123456 logs.go:42: ",
+    "middleware.go:118: ",
+])
+def test_v15_go_log_prefix_is_dropped(collector, prefix):
+    raw = ("<3> [nethvoice5] nethcti-middleware " + prefix +
+           "[AUTH][ERROR] authorization failed for user alice: missing")
+    template = _template(collector, raw)
+    assert template == (
+        "<3> [nethvoice] nethcti-middleware [AUTH][ERROR] authorization "
+        "failed for user <USER>: missing")
+    assert collector.mask(template) == template
+
+
+@pytest.mark.parametrize("stored", [
+    "<3> [nethvoice] nethcti-middleware <NUM>/<NUM>/<NUM> <TS> logs.go:<NUM>: [CRITICAL][DB] down",
+    "<3> [nethvoice] nethcti-middleware middleware.go:<NUM>: [CRITICAL][DB] down",
+])
+def test_v15_stored_go_log_prefix_is_dropped(collector, stored):
+    assert collector.mask(stored) == "<3> [nethvoice] nethcti-middleware [CRITICAL][DB] down"
+
+
+@pytest.mark.parametrize("line", [
+    "<4> [prometheus] ts=<TS> caller=head.go:<NUM> level=info msg=ok",
+    "<4> [prometheus] source=head.go:<NUM> level=info",
+])
+def test_v15_go_source_field_is_kept(collector, line):
+    assert collector.mask(line) == line
+
+
+def test_v15_masking_version(collector):
+    assert collector.MASKING_VERSION == 15
