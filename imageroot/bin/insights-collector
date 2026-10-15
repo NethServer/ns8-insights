@@ -305,7 +305,12 @@ def sanitize_line(raw):
 # 17: the file name in tancredi's 'Template not found for "<file>"'
 # becomes <PATH>. A phone asks for a file named after its model or its
 # MAC, so one missing template made a template per phone model.
-MASKING_VERSION = 17
+#
+# 18: FreePBX's XTNCONFLICT notification keeps only its count of
+# conflicting extensions. The list after it names what uses each one --
+# "INUSE: Queue: <queue name>" -- and customers name queues after
+# people: the names reached the server in clear, a template per name.
+MASKING_VERSION = 18
 
 # Placeholders already present in the input are left alone, which is what
 # makes mask() idempotent. Listed here so one rule can protect all of them.
@@ -477,6 +482,16 @@ FOLD_RULES = [
     (
         re.compile(r'(\bTemplate not found for )"[^"]*"'),
         r'\1"<PATH>"',
+    ),
+    # FreePBX's extension conflict notification lists each extension and
+    # what uses it, by name: "(Extension: 8001:<br /> INUSE: Queue: <queue
+    # name><br /> ...". Customers name queues, ring groups and users after
+    # people, so the list is private as well as volatile. Re-matches its
+    # own output.
+    (
+        re.compile(r'(\[XTNCONFLICT\] - There (?:are|is) (?:\d+|<NUM>) '
+                   r'conflicting extensions? ).*'),
+        r'\1<DATA>',
     ),
     # systemd-coredump's stack trace: frame count and addresses differ on
     # every crash. The process name before it is the signal and is kept.

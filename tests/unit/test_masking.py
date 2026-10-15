@@ -1201,5 +1201,27 @@ def test_v17_tancredi_template_name_is_masked(collector, name):
     assert collector.mask(template) == template
 
 
-def test_v17_masking_version(collector):
-    assert collector.MASKING_VERSION == 17
+# --------------------------------------------------------------------------
+# Masking version 18: FreePBX's XTNCONFLICT list of names is folded.
+# --------------------------------------------------------------------------
+
+XTNCONFLICT = (
+    "<3> [freepbx5] [2026-10-15 10:11:12] [freepbx.INFO]: [NOTIFICATION]-"
+    "[retrieve_conf]-[XTNCONFLICT] - There are 1 conflicting extensions "
+    "(Extension: 8001:<br /> INUSE: Queue: {q}<br /> INUSE: Featurecode: "
+    "atxfercallbackretries (extraoptions:Call back retries)<br />Ex"
+)
+
+
+@pytest.mark.parametrize("queue", ["Alice e Bob", "Amministrazione", "coda uff"])
+def test_v18_xtnconflict_names_are_masked(collector, queue):
+    template = _template(collector, XTNCONFLICT.format(q=queue))
+    assert queue not in template
+    assert template == (
+        "<3> [freepbx] [<TS>] [<HOST>]: [NOTIFICATION]-[retrieve_conf]-"
+        "[XTNCONFLICT] - There are <NUM> conflicting extensions <DATA>")
+    assert collector.mask(template) == template
+
+
+def test_v18_masking_version(collector):
+    assert collector.MASKING_VERSION == 18
