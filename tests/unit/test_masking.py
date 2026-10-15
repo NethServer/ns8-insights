@@ -1277,5 +1277,34 @@ def test_v20_stored_sshd_empty_user_is_masked(collector):
         "<6> [sshd-session] Connection closed by invalid user <USER> <IP> port <NUM> [preauth]")
 
 
-def test_v20_masking_version(collector):
-    assert collector.MASKING_VERSION == 20
+# --------------------------------------------------------------------------
+# Masking version 21: an SSH key fingerprint folds whole to <ID>.
+# --------------------------------------------------------------------------
+
+@pytest.mark.parametrize("fingerprint", [
+    "bhkx0O+KmrZz/AbCdEfGh1234567890abcdefGHIJKLMN",
+    "bhkx0OKmrZzAbCdEfGh1234567890abcdefGHIJKLMN",
+    "/+AbCdEfGh1234567890abcdefGHIJKLMNbhkx0OKmrZz",
+    "AbCdEfGh1234567/890abcdefGHIJKLMNbhkx0OKmrZz",
+])
+def test_v21_ssh_fingerprint_is_masked(collector, fingerprint):
+    raw = ("<6> [sshd-session] Accepted publickey for root from 203.0.113.5 "
+           "port 22 ssh2: RSA SHA256:" + fingerprint)
+    template = _template(collector, raw)
+    assert template == ("<6> [sshd-session] Accepted publickey for root from "
+                        "<IP> port <NUM> ssh2: RSA SHA256:<ID>")
+    assert collector.mask(template) == template
+
+
+@pytest.mark.parametrize("stored", [
+    "ssh2: RSA SHA256:bhkx0O+KmrZz/<ID>",
+    "ssh2: RSA SHA256:<redacted-blob>",
+    "ssh2: RSA SHA256:/+<redacted-blob>",
+    "ssh2: RSA SHA256:<ID>/<ID>",
+])
+def test_v21_stored_ssh_fingerprint_is_masked(collector, stored):
+    assert collector.mask(stored) == "ssh2: RSA SHA256:<ID>"
+
+
+def test_v21_masking_version(collector):
+    assert collector.MASKING_VERSION == 21

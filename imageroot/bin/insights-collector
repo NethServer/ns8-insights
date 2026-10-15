@@ -322,7 +322,12 @@ def sanitize_line(raw):
 # sanitize_line() squeezes: rule 14 took the "from" after it as the name,
 # or the address if "from" was absent, so an attack that tried an empty
 # name split the same line into two more templates.
-MASKING_VERSION = 20
+#
+# 21: an SSH key fingerprint, "SHA256:<base64>", folds whole to <ID>.
+# scrub()'s blob rule stops at "/", so a fingerprint was cut wherever its
+# "/" fell -- "SHA256:bhkx0O+KmrZz/<ID>", "SHA256:<redacted-blob>" -- and
+# each key that logged in made its own template.
+MASKING_VERSION = 21
 
 # Placeholders already present in the input are left alone, which is what
 # makes mask() idempotent. Listed here so one rule can protect all of them.
@@ -515,6 +520,14 @@ FOLD_RULES = [
         re.compile(r'(?i)(\binvalid user )(?:\S+ )??'
                    r'(?=(?:from )?\S+ port (?:\d|<NUM>))'),
         r'\1<USER> ',
+    ),
+    # An SSH key fingerprint, as sshd logs an accepted key. Base64 holds
+    # "/", where scrub()'s blob rule stops, so the fingerprint may already
+    # be cut into pieces around a <redacted-blob>. Re-matches its own
+    # output.
+    (
+        re.compile(r'(\bSHA256:)(?:[A-Za-z0-9+/=]|<redacted-blob>|<ID>)+'),
+        r'\1<ID>',
     ),
     # systemd-coredump's stack trace: frame count and addresses differ on
     # every crash. The process name before it is the signal and is kept.
