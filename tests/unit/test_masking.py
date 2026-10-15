@@ -986,5 +986,45 @@ def test_v10_stored_dovecot_prefix_is_masked(collector, stored):
         "<2> [dovecot] imap(<USER>)<PID><ID>: Fatal: block_alloc(<PID>): Out of memory")
 
 
-def test_v10_masking_version(collector):
-    assert collector.MASKING_VERSION == 10
+# --------------------------------------------------------------------------
+# Masking version 11: dovecot's mailbox directory, "/var/lib/vmail/<name>",
+# is named after the account. A sieve error logs the script path.
+# --------------------------------------------------------------------------
+
+SIEVE_ERROR = (
+    "<3> [dovecot] lmtp({u})<2386397><kQ1Ff9VCBuF/AAAB>: Error: sieve: "
+    "Execution of script /var/lib/vmail/{u}/.dovecot.sieve failed with "
+    "unsuccessful implicit keep (user {u} /var/lib/vmail/{u}/.dovecot.sieve.log "
+    "may reveal additional details)"
+)
+
+
+@pytest.mark.parametrize("user", ["edoardo", "anna.rossi", "marzio@example.com"])
+def test_v11_vmail_path_is_masked(collector, user):
+    template = _template(collector, SIEVE_ERROR.format(u=user))
+    assert user not in template
+    assert "/var/lib/vmail/<USER>/" in template
+    assert template.startswith("<3> [dovecot] lmtp(<USER>)<PID><ID>: ")
+    assert collector.mask(template) == template
+
+
+def test_v11_vmail_path_without_trailing_slash(collector):
+    assert collector.mask("home=/var/lib/vmail/edoardo, uid=5000") == (
+        "home=/var/lib/vmail/<USER>, uid=<NUM>")
+
+
+def test_v11_stored_sieve_error_is_masked(collector):
+    stored = (
+        "<3> [dovecot] lmtp(edoardo)<2386397><<ID>>: Error: sieve: Execution "
+        "of script /var/lib/vmail/edoardo/.<HOST> failed with unsuccessful "
+        "implicit keep (user <USER> /var/lib/vmail/edoardo/.dovecot.sieve.log "
+        "may reveal additional details)")
+    assert collector.mask(stored) == (
+        "<3> [dovecot] lmtp(<USER>)<PID><ID>: Error: sieve: Execution "
+        "of script /var/lib/vmail/<USER>/.<HOST> failed with unsuccessful "
+        "implicit keep (user <USER> /var/lib/vmail/<USER>/.dovecot.sieve.log "
+        "may reveal additional details)")
+
+
+def test_v11_masking_version(collector):
+    assert collector.MASKING_VERSION == 11

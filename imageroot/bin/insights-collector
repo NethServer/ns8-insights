@@ -272,7 +272,11 @@ def sanitize_line(raw):
 # prefix of every mail process line, and the login line's "user=<name>".
 # No rule matched either shape, so the name reached the server in clear,
 # and the pid and session id made a template per session.
-MASKING_VERSION = 10
+#
+# 11: the mailbox directory "/var/lib/vmail/<name>" folds the account to
+# <USER>. A sieve error names the script path, so the name reached the
+# server in clear even with the dovecot prefix masked.
+MASKING_VERSION = 11
 
 # Placeholders already present in the input are left alone, which is what
 # makes mask() idempotent. Listed here so one rule can protect all of them.
@@ -522,6 +526,12 @@ FOLD_RULES = [
     (
         re.compile(r'\b(user|session)=<(?:<[^<>\s]*>|[^<>\s])+>'),
         lambda m: m.group(1) + ('=<USER>' if m.group(1) == 'user' else '=<ID>'),
+    ),
+    # dovecot's mailbox directory is named after the account:
+    # "/var/lib/vmail/marzio/.dovecot.sieve". Re-matches its own output.
+    (
+        re.compile(r'(/var/lib/vmail/)[^/\s,;:()\'"]+'),
+        r'\1<USER>',
     ),
 ]
 
