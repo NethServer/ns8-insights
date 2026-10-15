@@ -1159,5 +1159,29 @@ def test_v15_go_source_field_is_kept(collector, line):
     assert collector.mask(line) == line
 
 
-def test_v15_masking_version(collector):
-    assert collector.MASKING_VERSION == 15
+# --------------------------------------------------------------------------
+# Masking version 16: the pid in dovecot's post-login line becomes <PID>.
+# --------------------------------------------------------------------------
+
+POSTLOGIN = ("<3> [dovecot2] imap-postlogin: Error: <{p}>impersonated login "
+             "MASTER_USER=vmail USER=alice.rossi AUTH_USER=vmail "
+             "IP=192.0.2.1 LOCAL_IP=192.0.2.2")
+
+
+@pytest.mark.parametrize("pid", ["12", "1234", "12345", "123456", "1234567"])
+def test_v16_postlogin_pid_is_masked(collector, pid):
+    template = _template(collector, POSTLOGIN.format(p=pid))
+    assert template == (
+        "<3> [dovecot] imap-postlogin: Error: <PID>impersonated login "
+        "MASTER_USER=<USER> USER=<USER> AUTH_USER=<USER> IP=<IP> LOCAL_IP=<IP>")
+    assert collector.mask(template) == template
+
+
+@pytest.mark.parametrize("pid", ["<<NUM>>", "<HEX>"])
+def test_v16_stored_postlogin_pid_is_masked(collector, pid):
+    stored = f"<3> [dovecot] imap-postlogin: Error: {pid}impersonated login"
+    assert collector.mask(stored) == "<3> [dovecot] imap-postlogin: Error: <PID>impersonated login"
+
+
+def test_v16_masking_version(collector):
+    assert collector.MASKING_VERSION == 16

@@ -296,7 +296,12 @@ def sanitize_line(raw):
 # or only "middleware.go:42: ", is dropped. nethcti-middleware writes one
 # or the other depending on its version, and moves messages between
 # files, so the same message made a template per release.
-MASKING_VERSION = 15
+#
+# 16: the pid dovecot's post-login script logs, "imap-postlogin: Error:
+# <12345>impersonated login ...", becomes <PID>. It stayed in clear up to
+# four digits and became <HEX> with five or six, so the same line made a
+# template per process.
+MASKING_VERSION = 16
 
 # Placeholders already present in the input are left alone, which is what
 # makes mask() idempotent. Listed here so one rule can protect all of them.
@@ -572,6 +577,13 @@ FOLD_RULES = [
     (
         re.compile(r'\b(user|session)=<(?:<[^<>\s]*>|[^<>\s])+>'),
         lambda m: m.group(1) + ('=<USER>' if m.group(1) == 'user' else '=<ID>'),
+    ),
+    # dovecot's post-login script prefixes its message with the pid of the
+    # mail process: "imap-postlogin: Error: <12345>impersonated login". Also
+    # takes the masked forms, so stored lines fold too, and its own output.
+    (
+        re.compile(r'(\b[\w-]*postlogin: \w+: )<(?:\d+|<NUM>|HEX|PID)>'),
+        r'\1<PID>',
     ),
     # dovecot's mailbox directory is named after the account:
     # "/var/lib/vmail/marzio/.dovecot.sieve". Re-matches its own output.
