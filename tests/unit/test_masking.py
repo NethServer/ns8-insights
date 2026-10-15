@@ -913,5 +913,78 @@ def test_v9_stored_user_not_configured_is_masked(collector, stored):
     assert collector.mask(expected) == expected
 
 
-def test_v9_masking_version(collector):
-    assert collector.MASKING_VERSION == 9
+# --------------------------------------------------------------------------
+# Masking version 10: dovecot's per-session prefix. A mail process names
+# its log lines "imap(<user>)<pid><session>:", and the login processes
+# write "user=<name>, ..., session=<id>". The account went to the server
+# in clear, and the pid and the session id made a template per session.
+# --------------------------------------------------------------------------
+
+@pytest.mark.parametrize("raw, expected", [
+    (
+        "<2> [dovecot] imap(marzio)<2202083><kQ1Ff9VCBuF/AAAB>: Fatal: "
+        "block_alloc(268435456): Out of memory",
+        "<2> [dovecot] imap(<USER>)<PID><ID>: Fatal: "
+        "block_alloc(<PID>): Out of memory",
+    ),
+    (
+        "<6> [dovecot] imap(marzio@example.com)<2202083><kQ1Ff9VCBuF/AAAB>: "
+        "Logged out in=12 out=345",
+        "<6> [dovecot] imap(<USER>)<PID><ID>: Logged out in=<NUM> out=<NUM>",
+    ),
+    (
+        "<6> [dovecot] pop3(anna.rossi)<11><abcd>: Disconnected: Logged out",
+        "<6> [dovecot] pop3(<USER>)<PID><ID>: Disconnected: Logged out",
+    ),
+    (
+        "<6> [dovecot] lmtp(marzio)<4321>: saved mail to INBOX",
+        "<6> [dovecot] lmtp(<USER>)<PID>: saved mail to INBOX",
+    ),
+    (
+        "<6> [dovecot] indexer-worker(marzio)<77><lzQyBg:Ab12>: Indexed 3 messages",
+        "<6> [dovecot] indexer-worker(<USER>)<PID><ID>: Indexed <NUM> messages",
+    ),
+    (
+        "<6> [dovecot] imap-login: Login: user=<marzio>, method=PLAIN, "
+        "rip=192.0.2.1, lip=192.0.2.2, mpid=123, TLS, session=<kQ1Ff9VCBuF/AAAB>",
+        "<6> [dovecot] imap-login: Login: user=<USER>, method=PLAIN, "
+        "rip=<IP>, lip=<IP>, mpid=<NUM>, TLS, session=<ID>",
+    ),
+    (
+        "<6> [dovecot] imap-login: Login: user=<marzio@example.com>, method=PLAIN, "
+        "rip=192.0.2.1, lip=192.0.2.2, mpid=123, TLS, session=<kQ1Ff9VCBuF/AAAB>",
+        "<6> [dovecot] imap-login: Login: user=<USER>, method=PLAIN, "
+        "rip=<IP>, lip=<IP>, mpid=<NUM>, TLS, session=<ID>",
+    ),
+])
+def test_v10_dovecot_user_is_masked(collector, raw, expected):
+    assert _template(collector, raw) == expected
+    assert collector.mask(expected) == expected
+
+
+def test_v10_dovecot_empty_user_is_kept(collector):
+    # "user=<>" means the client gave no name: a signal, not an account.
+    raw = ("<6> [dovecot] pop3-login: Disconnected (no auth attempts): "
+           "user=<>, rip=192.0.2.1, lip=192.0.2.2, session=<abcd>")
+    assert _template(collector, raw) == (
+        "<6> [dovecot] pop3-login: Disconnected (no auth attempts): "
+        "user=<>, rip=<IP>, lip=<IP>, session=<ID>")
+
+
+def test_v10_dovecot_master_line_is_untouched(collector):
+    # "service(imap): child ..." names a service, not a user.
+    line = "<2> [dovecot] master: service(imap): child <NUM> returned error <NUM>"
+    assert collector.mask(line) == line
+
+
+@pytest.mark.parametrize("stored", [
+    "<2> [dovecot] imap(marzio)<2202083><<ID>>: Fatal: block_alloc(<PID>): Out of memory",
+    "<2> [dovecot] imap(marzio)<2202083><kQ1Ff9VCBuF/AAAB>: Fatal: block_alloc(<PID>): Out of memory",
+])
+def test_v10_stored_dovecot_prefix_is_masked(collector, stored):
+    assert collector.mask(stored) == (
+        "<2> [dovecot] imap(<USER>)<PID><ID>: Fatal: block_alloc(<PID>): Out of memory")
+
+
+def test_v10_masking_version(collector):
+    assert collector.MASKING_VERSION == 10

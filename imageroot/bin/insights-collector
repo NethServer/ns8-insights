@@ -267,7 +267,12 @@ def sanitize_line(raw):
 # 9: nethcti's "user <name> is not configured" folds the whole name. It is
 # a display name of several words, and rule 14 took only the first, so the
 # person's full name reached the server and made a template per person.
-MASKING_VERSION = 9
+#
+# 10: dovecot's account names fold to <USER>: the "imap(name)<pid><session>:"
+# prefix of every mail process line, and the login line's "user=<name>".
+# No rule matched either shape, so the name reached the server in clear,
+# and the pid and session id made a template per session.
+MASKING_VERSION = 10
 
 # Placeholders already present in the input are left alone, which is what
 # makes mask() idempotent. Listed here so one rule can protect all of them.
@@ -499,6 +504,24 @@ FOLD_RULES = [
     (
         re.compile(r'(\bsid:? )[\w-]+'),
         r'\1<ID>',
+    ),
+    # dovecot's mail processes prefix every line with the account, the pid
+    # and the session id: "imap(marzio)<2202083><kQ1Ff9VCBuF/AAAB>: ...".
+    # A "<pid>" must follow the parentheses, so "service(imap): " is left
+    # alone. The session id may already hold a placeholder, like
+    # <<redacted-blob>>, hence the nested alternative. Re-matches its own
+    # output: the pid may be <PID>.
+    (
+        re.compile(r'\b([a-z][a-z0-9-]*)\([^()\s]+\)<(?:\d+|PID)>'
+                   r'(<(?:<[^<>\s]*>|[^<>\s])+>)?(?=:)'),
+        lambda m: m.group(1) + '(<USER>)<PID>' + ('<ID>' if m.group(2) else ''),
+    ),
+    # The login processes write "user=<marzio>, ..., session=<id>". The
+    # brackets put the name out of rule 13's reach. "user=<>" -- the client
+    # gave no name -- is kept.
+    (
+        re.compile(r'\b(user|session)=<(?:<[^<>\s]*>|[^<>\s])+>'),
+        lambda m: m.group(1) + ('=<USER>' if m.group(1) == 'user' else '=<ID>'),
     ),
 ]
 
