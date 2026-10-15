@@ -343,7 +343,11 @@ def sanitize_line(raw):
 # 24: an account in a request path, "GET /historycall/interval/user/<name>/
 # ...", becomes <USER>. nethcti-middleware logs each authorized request,
 # so the name reached the server in clear, a template per person.
-MASKING_VERSION = 24
+#
+# 25: the text searched in nethcti's phonebook, "GET /phonebook/search/
+# <text>?...", becomes <DATA>. It is a contact's name or number, so
+# people's and companies' names reached the server in clear.
+MASKING_VERSION = 25
 
 # Placeholders already present in the input are left alone, which is what
 # makes mask() idempotent. Listed here so one rule can protect all of them.
@@ -624,6 +628,12 @@ FOLD_RULES = [
     (
         re.compile(r'(\b(?:GET|HEAD|POST|PUT|PATCH|DELETE) /\S*?/user/)[^/\s?]+'),
         r'\1<USER>',
+    ),
+    # The text searched in nethcti's phonebook: a person's or a company's
+    # name, or a number. An empty search is kept. Re-matches its own output.
+    (
+        re.compile(r'(/phonebook/search/)[^?\s]+'),
+        r'\1<DATA>',
     ),
     # nethcti user names and socket.io session ids. The account is in the
     # retained sample line, the same trade rules 13 and 14 make.

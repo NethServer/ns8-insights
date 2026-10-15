@@ -1404,5 +1404,27 @@ def test_v24_user_endpoint_is_kept(collector, line):
     assert collector.mask(line) == line
 
 
-def test_v24_masking_version(collector):
-    assert collector.MASKING_VERSION == 24
+# --------------------------------------------------------------------------
+# Masking version 25: the text searched in nethcti's phonebook.
+# --------------------------------------------------------------------------
+
+@pytest.mark.parametrize("search", ["ALICE%20ROSSI", "Example%20SRL", "0612345678", "+3906"])
+def test_v25_phonebook_search_is_masked(collector, search):
+    raw = ("<3> [nethvoice5] nethcti-middleware middleware.go:42: [INFO][AUTH] "
+           "authorization success for user alice. GET /phonebook/search/" + search +
+           "?offset=0&limit=15&view=company")
+    template = _template(collector, raw)
+    assert template == (
+        "<3> [nethvoice] nethcti-middleware [INFO][AUTH] authorization success "
+        "for user <USER>. GET /phonebook/search/<DATA>?offset=<NUM>&limit=<NUM>"
+        "&view=company")
+    assert collector.mask(template) == template
+
+
+def test_v25_empty_phonebook_search_is_kept(collector):
+    line = "GET /phonebook/search/?offset=<NUM>&limit=<NUM>&view=all"
+    assert collector.mask(line) == line
+
+
+def test_v25_masking_version(collector):
+    assert collector.MASKING_VERSION == 25
