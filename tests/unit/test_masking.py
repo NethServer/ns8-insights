@@ -1379,5 +1379,30 @@ def test_v23_referer_is_kept_outside_apache(collector):
     assert collector.mask(line) == line
 
 
-def test_v23_masking_version(collector):
-    assert collector.MASKING_VERSION == 23
+# --------------------------------------------------------------------------
+# Masking version 24: an account in a request path becomes <USER>.
+# --------------------------------------------------------------------------
+
+HISTORY = ("<3> [nethvoice5] nethcti-middleware middleware.go:42: [INFO][AUTH] "
+           "authorization success for user {u}. GET /historycall/interval/user/"
+           "{u}/20261015/20261016?offset=0&limit=15")
+
+
+@pytest.mark.parametrize("user", ["alice", "alice.rossi", "int21"])
+def test_v24_user_in_request_path_is_masked(collector, user):
+    template = _template(collector, HISTORY.format(u=user))
+    assert user not in template
+    assert "GET /historycall/interval/user/<USER>/<HEX>/<HEX>?" in template
+    assert collector.mask(template) == template
+
+
+@pytest.mark.parametrize("line", [
+    "authorization success for user <USER>. GET /user/paramurl",
+    "authorization success for user <USER>. GET /user/endpoints/all",
+])
+def test_v24_user_endpoint_is_kept(collector, line):
+    assert collector.mask(line) == line
+
+
+def test_v24_masking_version(collector):
+    assert collector.MASKING_VERSION == 24

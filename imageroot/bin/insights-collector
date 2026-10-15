@@ -339,7 +339,11 @@ def sanitize_line(raw):
 # and its "script '<path>' not found" keeps the directory but folds the
 # file to <PATH>. Both come from whoever made the request: every scanner
 # run made new templates of one probe.
-MASKING_VERSION = 23
+#
+# 24: an account in a request path, "GET /historycall/interval/user/<name>/
+# ...", becomes <USER>. nethcti-middleware logs each authorized request,
+# so the name reached the server in clear, a template per person.
+MASKING_VERSION = 24
 
 # Placeholders already present in the input are left alone, which is what
 # makes mask() idempotent. Listed here so one rule can protect all of them.
@@ -612,6 +616,14 @@ FOLD_RULES = [
                    r'(?:\d{2}:\d{2}:\d{2}(?:\.\d+)?|<TS>) )?'
                    r'[\w-]+\.go:(?:\d+|<NUM>): '),
         '',
+    ),
+    # An account named in a request path below an API endpoint:
+    # "GET /historycall/interval/user/alice/...". A path that starts with
+    # /user/, like "GET /user/paramurl", names an endpoint and is kept.
+    # Re-matches its own output.
+    (
+        re.compile(r'(\b(?:GET|HEAD|POST|PUT|PATCH|DELETE) /\S*?/user/)[^/\s?]+'),
+        r'\1<USER>',
     ),
     # nethcti user names and socket.io session ids. The account is in the
     # retained sample line, the same trade rules 13 and 14 make.
