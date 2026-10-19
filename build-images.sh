@@ -41,6 +41,7 @@ buildah add "${container}" ui/dist /ui
 buildah config --entrypoint=/ \
     --label="org.nethserver.rootfull=0" \
     --label="org.nethserver.max-per-node=1" \
+    --label="org.nethserver.flags=no_data_backup" \
     --label="org.nethserver.min-core=3.2.0-0" \
     "${container}"
 # Commit the image
