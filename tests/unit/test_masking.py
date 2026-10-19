@@ -1021,7 +1021,7 @@ def test_v11_stored_sieve_error_is_masked(collector):
         "may reveal additional details)")
     assert collector.mask(stored) == (
         "<3> [dovecot] lmtp(<USER>)<PID><ID>: Error: sieve: Execution "
-        "of script /var/lib/vmail/<USER>/.<HOST> failed with unsuccessful "
+        "of script /var/lib/vmail/<USER>/<PATH> failed with unsuccessful "
         "implicit keep (user <USER> /var/lib/vmail/<USER>/.dovecot.sieve.log "
         "may reveal additional details)")
 
@@ -1426,5 +1426,487 @@ def test_v25_empty_phonebook_search_is_kept(collector):
     assert collector.mask(line) == line
 
 
-def test_v25_masking_version(collector):
-    assert collector.MASKING_VERSION == 25
+
+
+# --------------------------------------------------------------------------
+# Masking version 26: personal data still in the dev fleet's stored
+# templates on 2026-10-19 -- account and folder names, nextcloud files,
+# phonebook contacts, a staff directory -- and three shapes that minted a
+# template per probe, per stream or per backup.
+# --------------------------------------------------------------------------
+
+# 26.1: dovecot's auth line names the account and the session.
+
+AUTH_FAILED = ("<3> [dovecot] auth: Error: plain({u},192.0.2.4,<{s}>): "
+               "user not found from any userdbs")
+AUTH_FAILED_TEMPLATE = ("<3> [dovecot] auth: Error: plain(<USER>,<IP>,<ID>): "
+                        "user <USER> found from any userdbs")
+
+
+@pytest.mark.parametrize("user, session", [
+    ("alice", "k++aQPemrXKBQQZ"),
+    ("marzio", "AbCdEf12+/xy"),
+    ("anna.rossi", "xYz12AbC"),
+    ("marzio@example.com", "pq7d8shdj+wBrBY3"),
+    ("?", "q"),
+])
+def test_v26_dovecot_auth_is_masked(collector, user, session):
+    template = _template(collector, AUTH_FAILED.format(u=user, s=session))
+    assert template == AUTH_FAILED_TEMPLATE
+    assert session not in template
+    assert collector.mask(template) == template
+
+
+@pytest.mark.parametrize("raw, expected", [
+    ("<3> [dovecot] auth-worker(12345): Error: conn unix:auth-worker "
+     "(pid=1,uid=97): auth-worker<5>: ldap(alice,192.0.2.4,<abc12>): "
+     "ldap_bind() failed",
+     "<3> [dovecot] auth-worker(<PID>): Error: conn unix:auth-worker "
+     "(pid=<PID>,uid=<NUM>): auth-worker<<NUM>>: ldap(<USER>,<IP>,<ID>): "
+     "ldap_bind() failed"),
+    ("<3> [dovecot] auth: passwd-file(alice,192.0.2.4): unknown user",
+     "<3> [dovecot] auth: passwd-file(<USER>,<IP>): unknown user"),
+    ("<3> [dovecot] auth-worker(12345): pam(alice,2001:db8::1): "
+     "pam_authenticate() failed",
+     "<3> [dovecot] auth-worker(<PID>): pam(<USER>,<IP>): "
+     "pam_authenticate() failed"),
+    ("<3> [dovecot] auth: Error: login(alice,,<x+y/z>): Request timed out",
+     "<3> [dovecot] auth: Error: login(<USER>,,<ID>): Request timed out"),
+])
+def test_v26_dovecot_auth_shapes_are_masked(collector, raw, expected):
+    template = _template(collector, raw)
+    assert template == expected
+    assert "alice" not in template
+    assert collector.mask(template) == template
+
+
+def test_v26_stored_dovecot_auth_is_masked(collector):
+    stored = ("<3> [dovecot] auth: Error: plain(alice,<IP>,<k++aQPemrXKBQQZ>): "
+              "user <USER> found from any userdbs")
+    assert collector.mask(stored) == AUTH_FAILED_TEMPLATE
+
+
+@pytest.mark.parametrize("line", [
+    "<3> [dovecot] master: service(imap): child <NUM> killed",
+    "<3> [dovecot] auth-worker(<PID>): Error: Fatal: connection lost",
+])
+def test_v26_dovecot_auth_lookalikes_are_kept(collector, line):
+    assert collector.mask(line) == line
+
+
+def test_v26_dovecot_auth_reasons_stay_distinct(collector):
+    unknown = _template(collector, "<3> [dovecot] auth: passwd-file(alice,"
+                                   "192.0.2.4,<abc>): unknown user")
+    mismatch = _template(collector, "<3> [dovecot] auth: passwd-file(alice,"
+                                    "192.0.2.4,<abc>): Password mismatch")
+    assert unknown != mismatch
+
+
+# 26.1, already masked: the mail process prefix and the SASL account.
+
+@pytest.mark.parametrize("stored, expected", [
+    ("<3> [dovecot] imap(bob)<2225504><pq7d8shdj+wBrBY3>: Error: Disconnected",
+     "<3> [dovecot] imap(<USER>)<PID><ID>: Error: Disconnected"),
+    ("warning: unknown[<IP>]: SASL LOGIN authentication failed: (reason "
+     "unavailable), sasl_username=marzio",
+     "warning: unknown[<IP>]: SASL LOGIN authentication failed: (reason "
+     "unavailable), sasl_username=<USER>"),
+    ("warning: unknown[<IP>]: SASL LOGIN authentication failed: (reason "
+     "unavailable), sasl_username=clienti",
+     "warning: unknown[<IP>]: SASL LOGIN authentication failed: (reason "
+     "unavailable), sasl_username=<USER>"),
+])
+def test_v26_stored_mail_accounts_stay_masked(collector, stored, expected):
+    assert collector.mask(stored) == expected
+
+
+# 26.2: mailbox names and the folders of a mailbox directory.
+
+CACHE_RECORD = ("<3> [dovecot] imap(alice)<2225504><pq7d8shdj+wBrBY3>: Error: "
+                "Mailbox {m}: Deleting corrupted cache record uid=12: UID 12 "
+                "is not in the index")
+CACHE_RECORD_TEMPLATE = ("<3> [dovecot] imap(<USER>)<PID><ID>: Error: Mailbox "
+                         "<PATH>: Deleting corrupted cache record uid=<NUM>: "
+                         "UID <NUM> is not in the index")
+
+
+@pytest.mark.parametrize("mailbox", [
+    "Shared/monitor/Allarmi/Backup/Custom",
+    "INBOX",
+    "Clienti/Rossi Mario",
+    "Posta inviata",
+])
+def test_v26_mailbox_name_is_masked(collector, mailbox):
+    template = _template(collector, CACHE_RECORD.format(m=mailbox))
+    assert template == CACHE_RECORD_TEMPLATE
+    assert collector.mask(template) == template
+
+
+def test_v26_stored_mailbox_name_is_masked(collector):
+    stored = ("Error: Mailbox Shared/monitor/Allarmi/Backup/Custom: Deleting "
+              "corrupted cache record uid=<NUM>: broken")
+    assert collector.mask(stored) == (
+        "Error: Mailbox <PATH>: Deleting corrupted cache record uid=<NUM>: broken")
+
+
+@pytest.mark.parametrize("raw, expected", [
+    ("Error: msgid=<abc@example.com>: save failed to Junk: Mailbox doesn't "
+     "exist: Junk",
+     "Error: msgid=<<redacted-email>>: save failed to <PATH>: Mailbox doesn't "
+     "exist: <PATH>"),
+    ("Error: Mailbox doesn't exist: Clienti Rossi (0.001 + 0.000 secs)",
+     "Error: Mailbox doesn't exist: <PATH> (<NUM> + <NUM> secs)"),
+    ("Error: sieve: failed to store into mailbox 'Shared/alice/Clienti': "
+     "Permission denied",
+     "Error: sieve: failed to store into mailbox '<PATH>': Permission denied"),
+    ("Error: Corrupted record in mailbox Shared/monitor/Allarmi: Deleting",
+     "Error: Corrupted record in mailbox <PATH>: Deleting"),
+    ("Error: Corrupted record in mailbox Clienti",
+     "Error: Corrupted record in mailbox <PATH>"),
+])
+def test_v26_mailbox_name_shapes_are_masked(collector, raw, expected):
+    template = _template(collector, raw)
+    assert template == expected
+    assert collector.mask(template) == template
+
+
+@pytest.mark.parametrize("line", [
+    "Mailbox is full: try again later",
+    "Error: Mailbox is full: try again later",
+    "The mailbox quota is exceeded",
+])
+def test_v26_mailbox_prose_is_kept(collector, line):
+    assert collector.mask(line) == line
+
+
+def test_v26_mailbox_conditions_stay_distinct(collector):
+    cache = _template(collector, "Error: Mailbox Clienti: Deleting corrupted "
+                                 "cache record")
+    missing = _template(collector, "Error: Mailbox doesn't exist: Clienti")
+    assert cache != missing
+
+
+VMAIL_ERROR = ("<3> [dovecot] imap(alice)<1><a>: Error: open({p}) failed: "
+               "No such file or directory")
+
+
+@pytest.mark.parametrize("path, expected", [
+    ("/var/lib/vmail/edoardo/Maildir/.Archivio.2024/dovecot.index.cache",
+     "/var/lib/vmail/<USER>/Maildir/<PATH>/dovecot.index.cache"),
+    ("/var/lib/vmail/edoardo/Maildir/.Posta inviata/dovecot-uidlist",
+     "/var/lib/vmail/<USER>/Maildir/<PATH>/dovecot-uidlist"),
+    ("/var/lib/vmail/edoardo/Maildir/.Clienti.Rossi/dovecot.index.log.2",
+     "/var/lib/vmail/<USER>/Maildir/<PATH>/dovecot.index.log.<NUM>"),
+    ("/var/lib/vmail/edoardo/Maildir/cur/1697000000.M1P2.mail,S=123,W=456:2,S",
+     "/var/lib/vmail/<USER>/Maildir/cur/<PATH>"),
+    ("/var/lib/vmail/edoardo/.dovecot.sieve",
+     "/var/lib/vmail/<USER>/.dovecot.sieve"),
+    ("/var/lib/vmail/edoardo/.dovecot.lda-dupes",
+     "/var/lib/vmail/<USER>/.dovecot.lda-dupes"),
+    ("/var/lib/vmail/edoardo/sieve/roundcube.sieve",
+     "/var/lib/vmail/<USER>/sieve/<PATH>"),
+])
+def test_v26_vmail_folders_are_masked(collector, path, expected):
+    template = _template(collector, VMAIL_ERROR.format(p=path))
+    assert template == (
+        "<3> [dovecot] imap(<USER>)<PID><ID>: Error: open(" + expected +
+        ") failed: No such file or directory")
+    assert "edoardo" not in template
+    assert collector.mask(template) == template
+
+
+def test_v26_stored_vmail_folder_is_masked(collector):
+    assert collector.mask("/var/lib/vmail/edoardo/.<HOST>") == (
+        "/var/lib/vmail/<USER>/<PATH>")
+
+
+def test_v26_vmail_folders_merge_and_files_stay_apart(collector):
+    def path(p):
+        return _template(collector, VMAIL_ERROR.format(p=p))
+    assert path("/var/lib/vmail/a/Maildir/.Clienti/dovecot.index") == path(
+        "/var/lib/vmail/b/Maildir/.Fornitori.Rossi/dovecot.index")
+    assert path("/var/lib/vmail/a/Maildir/.Clienti/dovecot.index") != path(
+        "/var/lib/vmail/a/Maildir/.Clienti/dovecot-uidlist")
+
+
+# 26.3: nextcloud's account and WebDAV paths.
+
+NEXTCLOUD = ('{{"reqId":"aBcD1234efGH5678","level":3,"time":"2026-10-19T08:00:00+00:00",'
+             '"remoteAddr":"192.0.2.4","user":"{u}","app":"webdav","method":"PUT",'
+             '"url":"{url}","message":"Sabre\\\\DAV\\\\Exception\\\\Forbidden"}}')
+
+
+@pytest.mark.parametrize("user, url, expected", [
+    ("admin",
+     "/remote.php/dav/files/admin/X%2001-%20DATI/CLIENTI/1234_ESEMPIO%20SRL/"
+     "DIPENDENTI/01esempio/MARIO%20ROSSI%20LETT.%20ESEMPIO%20ORARIO.pdf",
+     "/remote.php/dav/files/<USER>/<PATH>"),
+    ("mario.rossi",
+     "/remote.php/dav/files/mario.rossi/Documenti/contratto.odt",
+     "/remote.php/dav/files/<USER>/<PATH>"),
+    ("admin",
+     "/remote.php/dav/uploads/admin/web-file-upload-8f2c4a1b9d3e7f60/1",
+     "/remote.php/dav/uploads/<USER>/<PATH>"),
+    ("admin", "/remote.php/dav/trashbin/admin/trash/x.pdf.d1697000000",
+     "/remote.php/dav/trashbin/<USER>/<PATH>"),
+    ("admin", "/remote.php/dav/calendars/admin/personal/",
+     "/remote.php/dav/calendars/<USER>/<PATH>"),
+    ("admin", "/remote.php/dav/addressbooks/users/admin/contacts/x.vcf",
+     "/remote.php/dav/addressbooks/users/<USER>/<PATH>"),
+    ("admin", "/remote.php/dav/principals/users/admin/",
+     "/remote.php/dav/principals/users/<USER>/"),
+    ("admin", "/remote.php/dav/files/admin", "/remote.php/dav/files/<USER>"),
+    ("admin", "/remote.php/webdav/Clienti/Rossi.pdf", "/remote.php/webdav/<PATH>"),
+])
+def test_v26_nextcloud_user_and_path_are_masked(collector, user, url, expected):
+    template = _template(collector, NEXTCLOUD.format(u=user, url=url))
+    assert template == (
+        '{"reqId":"<ID>","level":<NUM>,"time":"<TS>","remoteAddr":"<IP>",'
+        '"user":"<USER>","app":"webdav","method":"PUT","url":"' + expected +
+        '","message":"Sabre\\\\DAV\\\\Exception\\\\Forbidden"}')
+    assert user not in template
+    assert collector.mask(template) == template
+
+
+@pytest.mark.parametrize("stored, expected", [
+    ('"user":"admin","url":"/remote.php/dav/files/admin/X%<NUM>-%20DATI/CLIENTI/'
+     '1234_ESEMPIO%20SRL/DIPENDENTI/01esempio/MARIO%20ROSSI%20LETT.%20ESEMPIO%20ORARIO..."',
+     '"user":"<USER>","url":"/remote.php/dav/files/<USER>/<PATH>"'),
+    ('"url":"/remote.php/dav/files/admin/X%<NUM>-%20DATI/CLIENTI/1234_ESEMPIO%20SRL/'
+     'DIPENDENTI/01esempio/MARIO%20ROSSI%20LETT.%20ESEMPIO%<HOST>"',
+     '"url":"/remote.php/dav/files/<USER>/<PATH>"'),
+    ('"url":"/remote.php/dav/uploads/admin/web-file-upload-<HEX>/<NUM>"',
+     '"url":"/remote.php/dav/uploads/<USER>/<PATH>"'),
+])
+def test_v26_stored_nextcloud_path_is_masked(collector, stored, expected):
+    assert collector.mask(stored) == expected
+
+
+@pytest.mark.parametrize("line", [
+    '{"reqId":"<ID>","user":"--","app":"core","url":"/index.php/login",'
+    '"message":"Login failed"}',
+    '{"user":"","app":"core","url":"/remote.php/webdav/"}',
+    '{"app":"files","url":"/remote.php/dav/files/"}',
+])
+def test_v26_nextcloud_anonymous_is_kept(collector, line):
+    assert collector.mask(line) == line
+
+
+def test_v26_nextcloud_dav_kinds_stay_distinct(collector):
+    files = _template(collector, NEXTCLOUD.format(
+        u="a", url="/remote.php/dav/files/a/x.pdf"))
+    uploads = _template(collector, NEXTCLOUD.format(
+        u="a", url="/remote.php/dav/uploads/a/x"))
+    assert files != uploads
+
+
+# 26.4: the contact NethVoice's phonebook sync dumps.
+
+CONTACT = ("<3> [] [1234] ERROR: copying entry \"{{'owner_id': '', 'type': "
+           "'private', 'homeemail': '', 'workemail': '{e}', 'title': '{t}', "
+           "'company': '{c}', 'notes': '{n}', 'name': '{nm}', 'homestreet': '', "
+           "'cellphone': None, 'id': {i}}}\"")
+CONTACT_TEMPLATE = ("<3> [] [<PID>] ERROR: copying entry \"{'owner_id': '<DATA>', "
+                    "'type': '<DATA>', 'homeemail': '<DATA>', 'workemail': '<DATA>', "
+                    "'title': '<DATA>', 'company': '<DATA>', 'notes': '<DATA>', "
+                    "'name': '<DATA>', 'homestreet': '<DATA>', 'cellphone': '<DATA>', "
+                    "'id': '<DATA>'}\"")
+
+
+@pytest.mark.parametrize("email, title, company, notes, name, number", [
+    ("m.rossi@example.com", "Responsabile Ufficio Tecnico",
+     "EMPRESA EJEMPLO CIA. LTDA", "Cliente", "Mario Rossi", "12"),
+    ("", "", "", "", "Giulia Neri", "7"),
+    ("", "", "Example S.r.l.", "", "", "1234567"),
+])
+def test_v26_phonebook_contact_is_masked(collector, email, title, company,
+                                         notes, name, number):
+    template = _template(collector, CONTACT.format(
+        e=email, t=title, c=company, n=notes, nm=name, i=number))
+    assert template == CONTACT_TEMPLATE
+    for value in (title, company, name):
+        if value:
+            assert value not in template
+    assert collector.mask(template) == template
+
+
+def test_v26_stored_phonebook_contact_is_masked(collector):
+    stored = ("<3> [] [<PID>] ERROR: copying entry \"{'owner_id': '', 'title': "
+              "'Responsabile Ufficio Tecnico', 'company': 'EMPRESA EJEMPLO <HOST> "
+              "LTDA', 'notes': 'Cliente', 'name': 'Mario Rossi', "
+              "'homestreet': '', 'id': <NUM>}\"")
+    assert collector.mask(stored) == (
+        "<3> [] [<PID>] ERROR: copying entry \"{'owner_id': '<DATA>', 'title': "
+        "'<DATA>', 'company': '<DATA>', 'notes': '<DATA>', 'name': '<DATA>', "
+        "'homestreet': '<DATA>', 'id': '<DATA>'}\"")
+
+
+@pytest.mark.parametrize("raw, expected", [
+    ("ERROR: copying entry \"{'name': \"O'Brien\", 'notes': 'a\\'b', "
+     "'n': -1.5, 'd': datetime.datetime(2020, 1, 1, 0, 0), 'b': True}\": "
+     "Duplicate entry",
+     "ERROR: copying entry \"{'name': '<DATA>', 'notes': '<DATA>', "
+     "'n': '<DATA>', 'd': '<DATA>', 'b': '<DATA>'}\": Duplicate entry"),
+    ("ERROR: copying entry \"{'name': 'Mario', 'password=<redacted> 'x'}\": "
+     "broken",
+     "ERROR: copying entry \"{<DATA>}\": broken"),
+    ("ERROR: copying entry \"{'name': 'Mario Rossi', 'company",
+     "ERROR: copying entry \"{<DATA>}\""),
+])
+def test_v26_phonebook_contact_shapes_are_masked(collector, raw, expected):
+    template = _template(collector, raw)
+    assert template == expected
+    assert "Mario" not in template and "Brien" not in template
+    assert collector.mask(template) == template
+
+
+def test_v26_phonebook_key_sets_stay_distinct(collector):
+    one = _template(collector, "ERROR: copying entry \"{'name': 'a'}\"")
+    two = _template(collector, "ERROR: copying entry \"{'name': 'a', 'notes': 'b'}\"")
+    assert one != two
+
+
+# 26.5: a CSV dump, FreePBX's user directory.
+
+APACHE_NOTICE = ("<5> [freepbx5] [Sun Oct 19 08:00:00.123456 2026] [php7:notice] "
+                 "[pid 1234:tid 5678] [client 192.0.2.4:4444] ")
+APACHE_NOTICE_TEMPLATE = ("<5> [freepbx] [<TS>] [php7:notice] [pid <PID>:tid <NUM>] "
+                          "[client <IP>:<PORT>] <DATA>")
+
+
+@pytest.mark.parametrize("dump", [
+    '"anna","Anna Bianchi","201","","8f2c4a1b9d3e7f60","FALSE",'
+    '"TRUE","Padova","Sales"\\r\\n"luca","Luca Verdi","202",'
+    '"","8f2c4a1b9d3e7f61","FALSE","TRUE","Vicenza","Sales"',
+    '"a","Mario Rossi","1","",""',
+    '"mario","Mario Rossi"\\r\\n"anna","Anna Bianchi"',
+])
+def test_v26_csv_dump_is_masked(collector, dump):
+    template = _template(collector, APACHE_NOTICE + dump)
+    assert template == APACHE_NOTICE_TEMPLATE
+    assert "Rossi" not in template
+    assert collector.mask(template) == template
+
+
+def test_v26_stored_csv_dump_is_masked(collector):
+    stored = ('[freepbx] [<TS>] [php7:notice] [pid <PID>:tid <NUM>] [client <IP>:<PORT>] '
+              '"<HOST>","Anna Bianchi","<NUM>","","<HEX>","FALSE","TRUE",'
+              '"Padova","Sales"\\r\\n"<HOST>","Luca Verdi","<NUM>","","<HEX>",'
+              '"FALSE","TRUE","Vicenza","Sales"')
+    assert collector.mask(stored) == (
+        "[freepbx] [<TS>] [php7:notice] [pid <PID>:tid <NUM>] [client <IP>:<PORT>] "
+        "<DATA>")
+
+
+@pytest.mark.parametrize("line", [
+    'saved "a","b","c" here',
+    'values "a", "b", "c", "d", "e", "f"',
+    '{"app":"x","list":["a","b","c","d","e","f"]}',
+    '{"a":"b","c":"d","e":"f","g":"h","i":"j","k":"l"}',
+    'send HTTP <NUM> response with message "user <USER> is not configured"',
+])
+def test_v26_quoted_text_is_kept(collector, line):
+    assert collector.mask(line) == line
+
+
+# 26.6: free-text names: nethcti's message, FreePBX's destinations,
+# nethcti's stream ids.
+
+def test_v26_stored_nethcti_user_message_is_masked(collector):
+    stored = ("warn: [plugins_rest/authentication] send HTTP <NUM> response to "
+              "<IP>:<PORT> with message \"user <USER> maria rossi is not "
+              "configured\"")
+    assert collector.mask(stored) == (
+        "warn: [plugins_rest/authentication] send HTTP <NUM> response to "
+        "<IP>:<PORT> with message \"user <USER> is not configured\"")
+
+
+BAD_DESTINATIONS = "<4> [freepbx5] [BADDEST] - There {v} {n} bad destination{s} {d}"
+
+
+@pytest.mark.parametrize("verb, count, plural, destinations", [
+    ("are", "3", "s", "Announcement: Voicemail_Studio_Esempio (vm,1), Ring Group: "
+                      "Mario Rossi (grp,600)"),
+    ("is", "1", "", "Announcement: Benvenuto_Studio_Bianchi (app-announcement-3,s,1)"),
+])
+def test_v26_bad_destinations_are_masked(collector, verb, count, plural,
+                                         destinations):
+    template = _template(collector, BAD_DESTINATIONS.format(
+        v=verb, n=count, s=plural, d=destinations))
+    assert template == ("<4> [freepbx] [BADDEST] - There " + verb +
+                        " <NUM> bad destination" + plural + " <DATA>")
+    assert collector.mask(template) == template
+
+
+def test_v26_stored_bad_destinations_are_masked(collector):
+    stored = ("[BADDEST] - There are <NUM> bad destinations Announcement: "
+              "Voicemail_Studio_Esempio (vm,<NUM>)")
+    assert collector.mask(stored) == (
+        "[BADDEST] - There are <NUM> bad destinations <DATA>")
+
+
+@pytest.mark.parametrize("stream", ["vs_citofono_ingresso_nord", "cam1", "Ingresso Nord"])
+def test_v26_stream_id_is_masked(collector, stream):
+    raw = ("<4> [nethvoice5] 2026-10-19T08:00:00.000Z - warn: [streaming] "
+           "streaming \"" + stream + "\" error: Error: connect ETIMEDOUT")
+    template = _template(collector, raw)
+    assert template == ("<4> [nethvoice] <TS> - warn: [streaming] streaming "
+                        "\"<ID>\" error: Error: connect ETIMEDOUT")
+    assert collector.mask(template) == template
+
+
+def test_v26_stored_stream_id_is_masked(collector):
+    assert collector.mask('[streaming] streaming "vs_citofono_ingresso_nord" error') == (
+        '[streaming] streaming "<ID>" error')
+
+
+# 26.7: a probe's bytes in postfix, and the backup id in its units.
+
+@pytest.mark.parametrize("raw", [
+    "<4> [postfix] warning: non-SMTP command from unknown[192.0.2.4]: "
+    "\\026\\003\\001X\\002",
+    "<4> [postfix] warning: non-SMTP command from unknown[192.0.2.4]: "
+    "GET / HTTP/1.1",
+    "<4> [postfix] warning: non-SMTP command from unknown[192.0.2.4]: "
+    "\\<NUM>\\<NUM>\\001X\\002",
+])
+def test_v26_postfix_probe_is_masked(collector, raw):
+    template = _template(collector, raw)
+    assert template == ("<4> [postfix] warning: non-SMTP command from "
+                        "unknown[<IP>]: <DATA>")
+    assert collector.mask(template) == template
+
+
+def test_v26_postfix_pipelining_probe_is_masked(collector):
+    template = _template(collector, "<6> [postfix] improper command pipelining "
+                                    "after CONNECT from unknown[192.0.2.4]: "
+                                    "\\026\\003\\001X\\002")
+    assert template == ("<6> [postfix] improper command pipelining after "
+                        "CONNECT from unknown[<IP>]: <DATA>")
+    assert collector.mask(template) == template
+
+
+@pytest.mark.parametrize("unit, expected", [
+    ("backup77.service", "backup<NUM>.service"),
+    ("backup1.service", "backup<NUM>.service"),
+    ("backup1.timer", "backup<NUM>.timer"),
+])
+def test_v26_backup_unit_is_masked(collector, unit, expected):
+    template = _template(collector, "<3> [systemd] " + unit +
+                         ": Failed with result 'exit-code'.")
+    assert template == ("<3> [systemd] " + expected +
+                        ": Failed with result 'exit-code'.")
+    assert collector.mask(template) == template
+
+
+@pytest.mark.parametrize("line", [
+    "<3> [systemd] agent@nethvoice2.service: Failed with result 'exit-code'.",
+    "<3> [systemd] agent@backup1.service: Failed with result 'exit-code'.",
+    "<3> [systemd] backup.service: Failed with result 'exit-code'.",
+])
+def test_v26_other_units_are_kept(collector, line):
+    assert collector.mask(line) == line
+
+
+def test_v26_masking_version(collector):
+    assert collector.MASKING_VERSION == 26

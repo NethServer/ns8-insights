@@ -149,7 +149,10 @@ counted entry, so no line is sent verbatim. Two passes run as each line is
 read: `scrub()` removes likely secrets (`password=`, `token=`, `api_key=`,
 `Authorization` headers, long base64 runs, email addresses) and `mask()`
 replaces variable text (timestamps, PIDs, addresses, UUIDs and similar).
-Each template carries at most two example lines, truncated to 512
+`mask()` also replaces the personal data the known log formats carry:
+account names (SSH, mail, nextcloud, NethCTI), mailbox and folder names,
+nextcloud file paths, phonebook contacts and searches, and data dumps such
+as FreePBX's user directory or the bytes of a probe. Each template carries at most two example lines, truncated to 512
 characters. This is defence in depth, not a guarantee.
 
 One piece of identifying data is sent on purpose: the **node roster**

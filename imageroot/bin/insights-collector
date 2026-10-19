@@ -347,7 +347,36 @@ def sanitize_line(raw):
 # 25: the text searched in nethcti's phonebook, "GET /phonebook/search/
 # <text>?...", becomes <DATA>. It is a contact's name or number, so
 # people's and companies' names reached the server in clear.
-MASKING_VERSION = 25
+#
+# 26: personal data the rules still let through, measured on the dev
+# fleet's 2026-10-19 system_templates rows. The server keeps every
+# template it receives, so each name below was stored off the node; the
+# last items made a template per probe, per stream or per backup:
+#   1. dovecot's auth line, "plain(alice,<IP>,<k++aQPemrXKBQQZ>): ...",
+#      for every mechanism and passdb, folds to "plain(<USER>,<IP>,<ID>)".
+#      The session id was literal unless rule 6d happened to take it, so
+#      one error made a template per login.
+#   2. a mailbox name after "Error: Mailbox ", "in mailbox ", "save failed
+#      to " and in "Mailbox doesn't exist: " becomes <PATH>, and so do
+#      the folders in "/var/lib/vmail/<USER>/...". Dovecot's own file
+#      names stay: rule 9 no longer takes "dovecot.index.cache" or
+#      ".dovecot.sieve" for host names.
+#   3. nextcloud's JSON "user" field becomes <USER>, and a WebDAV path
+#      keeps its "/remote.php/dav/<kind>/" prefix but folds the account
+#      and the file path: "/dav/files/<USER>/<PATH>".
+#   4. the contact NethVoice dumps in 'copying entry "{...}"' keeps its
+#      keys, and every value becomes '<DATA>'.
+#   5. a run of five or more comma-separated quoted fields, or quoted
+#      records split by a literal "\r\n", folds to <DATA>: FreePBX logs
+#      its user directory as CSV, staff names and places included.
+#   6. FreePBX's BADDEST notification keeps only its count, as
+#      XTNCONFLICT does since 18, and the stream id in nethcti's
+#      'streaming "<id>" error' becomes <ID>.
+#   7. the bytes a probe sent, after postfix's "non-SMTP command from
+#      ...: " and "improper command pipelining after ... from ...: ",
+#      become <DATA>, and the backup id in "backup77.service" and
+#      "backup77.timer" becomes <NUM>.
+MASKING_VERSION = 26
 
 # Placeholders already present in the input are left alone, which is what
 # makes mask() idempotent. Listed here so one rule can protect all of them.
@@ -387,12 +416,21 @@ _SOURCE_FILE_SUFFIX = frozenset([
 ])
 
 
+# Dovecot's own files in a mailbox directory: "dovecot.index.cache",
+# "dovecot.list.index.log", ".dovecot.sieve". They name the part of the
+# mail store that failed, and none of them is a host. Not in the server's
+# list: the collector keeps them in the template it sends, and the server
+# folds paths for identity anyway.
+_DOVECOT_FILE = re.compile(r'dovecot\.(?:index|list|mailbox|sieve|svbin|lda)\b')
+
+
 def _mask_hostname(match):
     """Replace a dotted name with <HOST>, unless its final label is a
-    source-file or unit-file suffix -- see _SOURCE_FILE_SUFFIX above."""
+    source-file or unit-file suffix -- see _SOURCE_FILE_SUFFIX above --
+    or it is one of dovecot's file names."""
     text = match.group(0)
     last = text.rsplit('.', 1)[-1].lower()
-    if last in _SOURCE_FILE_SUFFIX:
+    if last in _SOURCE_FILE_SUFFIX or _DOVECOT_FILE.match(text):
         return text
     return '<HOST>'
 
@@ -433,6 +471,51 @@ def _mask_opaque_id(match):
     if switches / len(token) >= OPAQUE_ID_MIN_SWITCH_RATE:
         return '<ID>'
     return token
+
+
+# The record NethVoice's phonebook sync logs when it cannot copy a contact,
+# a Python dict repr: "{'name': 'Mario Rossi', 'notes': None, ...}". A
+# value is a quoted string, either quote, with escapes, a call such as
+# datetime.datetime(...), or a bare word or number. Keys are quoted strings.
+_PY_STRING = r"'(?:[^'\\]|\\.)*'|\"(?:[^\"\\]|\\.)*\""
+_PY_PAIR = (r"(" + _PY_STRING + r"): (?:" + _PY_STRING +
+            r"|[\w.]+\([^()]*\)|[^,{}'\"]*)")
+_PY_PAIR_RE = re.compile(_PY_PAIR)
+_PY_DICT = re.compile(r"\{(?:" + _PY_PAIR + r"(?:, " + _PY_PAIR + r")*)?\}")
+
+
+def _fold_contact_record(match):
+    """Keep the keys of a dumped contact and replace every value with
+    '<DATA>', empty ones included, so one key set makes one template. A
+    record that does not parse folds whole to {<DATA>}, up to the last
+    '}"' of the line, and that output folds to itself."""
+    text = match.group(2)
+    record = _PY_DICT.match(text)
+    if record:
+        folded = _PY_PAIR_RE.sub(r"\1: '<DATA>'", record.group(0))
+        return match.group(1) + folded + text[record.end():]
+    end = text.rfind('}"')
+    return match.group(1) + '{<DATA>}' + (text[end + 1:] if end >= 0 else '"')
+
+
+# The fixed parts of a mailbox directory: the Maildir layout and dovecot's
+# own files, which tell one failure of the mail store from another. Every
+# other component is a folder the user named, or a message file named
+# after the time and the host that delivered it.
+_VMAIL_KEPT = re.compile(r'(?:Maildir|cur|new|tmp|sieve|subscriptions'
+                         r'|maildirfolder|\.?dovecot(?:[\w.-]|<NUM>)*|<PATH>)\Z')
+
+
+def _fold_vmail_folders(match):
+    """Fold the folders below "/var/lib/vmail/<USER>" to <PATH>, a run of
+    them to one, keeping the components _VMAIL_KEPT lists."""
+    out = []
+    for component in match.group(2).split('/')[1:]:
+        if not _VMAIL_KEPT.match(component):
+            component = '<PATH>'
+        if not (component == '<PATH>' and out and out[-1] == '<PATH>'):
+            out.append(component)
+    return match.group(1) + ''.join('/' + c for c in out)
 
 # Folds run first, on the whole line, before MASKING_RULES. They exist for
 # the spans a line ECHOES rather than states -- a symbol list, a quoted
@@ -493,6 +576,22 @@ FOLD_RULES = [
         re.compile(r'(\b(?:GET|POST|PUT|PATCH|DELETE) /\S* )\{.*\}\s*$'),
         r'\1<DATA>',
     ),
+    # The bytes a client sent postfix before or instead of SMTP: a TLS
+    # handshake, an HTTP request, a scanner's probe. Each probe was a
+    # template of its own. The client before them stays for the rules.
+    (
+        re.compile(r'(\b(?:non-SMTP command from|improper command pipelining '
+                   r'after \S+ from) \S+: ).*'),
+        r'\1<DATA>',
+    ),
+    # The contact NethVoice's phonebook sync could not copy, dumped as a
+    # Python dict: names, companies, addresses and notes. Every key stays,
+    # so the template still tells which fields the record had, and every
+    # value folds -- see _fold_contact_record.
+    (
+        re.compile(r'(\bcopying entry ")(\{.*)'),
+        _fold_contact_record,
+    ),
     # tancredi names the phone behind every provisioning request by its whole
     # user-agent: model, firmware version and build date and, for Snom and
     # Yealink, its MAC address -- one template per phone for one condition.
@@ -530,6 +629,14 @@ FOLD_RULES = [
                    r'conflicting extensions? ).*'),
         r'\1<DATA>',
     ),
+    # The same for FreePBX's bad destination notification: "There are 3 bad
+    # destinations Announcement: Voicemail_Studio_Esempio (vm,1), ...". The
+    # destinations carry the names customers gave them.
+    (
+        re.compile(r'(\[BADDEST\](?: -)? There (?:are|is) (?:\d+|<NUM>) '
+                   r'bad destinations? ).*'),
+        r'\1<DATA>',
+    ),
     # sshd's "invalid user <name>", where the name may be empty: "Invalid
     # user  from 192.0.2.1 port 22". The name, if any, is what comes before
     # the address and port, with or without "from". The lazy match tries
@@ -556,6 +663,13 @@ FOLD_RULES = [
         re.compile(r'(\bgw_[\w<>]+/gw)\d+\b'),
         r'\1<NUM>',
     ),
+    # NS8 names a backup's units after its id: backup77.service and
+    # backup77.timer run backup 77. Only these: the instance number of
+    # agent@nethvoice2.service names the module that fails.
+    (
+        re.compile(r'(?<!@)\b(backup)\d+(\.(?:service|timer))\b'),
+        r'\1<NUM>\2',
+    ),
     # Apache's error log ends a line with the Referer header the client
     # sent, if any. Only on lines with Apache's "[client <address>]" field.
     (
@@ -568,6 +682,18 @@ FOLD_RULES = [
     (
         re.compile(r"(\bscript '[^']*/)[^'/]+(' not found or unable to stat)"),
         r'\1<PATH>\2',
+    ),
+    # A table a program dumps as CSV, each row a record: FreePBX logs its
+    # user directory, '"<user>","Anna Bianchi","201",...', rows
+    # split by a literal "\r\n". It takes five quoted fields in a row, or
+    # a record that ends in "\r\n", and the first one must follow a space:
+    # a JSON array starts with "[", and a JSON object breaks the run with
+    # a ":". From the first field to the end of the line, the prefix
+    # before it stays. The replacement has no quote, so it is final.
+    (
+        re.compile(r'(?<!\S)"(?:[^"]|"")*"(?:(?:,"(?:[^"]|"")*"){4,}'
+                   r'|(?:,"(?:[^"]|"")*")*\\r\\n").*'),
+        '<DATA>',
     ),
     # systemd-coredump's stack trace: frame count and addresses differ on
     # every crash. The process name before it is the signal and is kept.
@@ -635,6 +761,28 @@ FOLD_RULES = [
         re.compile(r'(/phonebook/search/)[^?\s]+'),
         r'\1<DATA>',
     ),
+    # nextcloud's JSON log names the account of each request, "user":
+    # "admin". Its anonymous "--" stays, as does an empty value.
+    (
+        re.compile(r'("user":")(?!--")[^"]+(?=")'),
+        r'\1<USER>',
+    ),
+    # A WebDAV path in nextcloud names the account and then the user's own
+    # files: "/remote.php/dav/files/admin/CLIENTI/<customer>/...". The kind
+    # after /dav/ is the signal and stays; the account becomes <USER> and
+    # whatever follows it <PATH>. The older /remote.php/webdav/ has no
+    # account in the path. Both re-match their own output.
+    (
+        re.compile(r'(/remote\.php/dav/(?:files|uploads|trashbin|versions'
+                   r'|calendars|addressbooks/users|principals/users)/)'
+                   r'[^/"\s?]+(/[^"\s?]*)?'),
+        lambda m: m.group(1) + '<USER>' + (
+            '' if m.group(2) is None else '/' if m.group(2) == '/' else '/<PATH>'),
+    ),
+    (
+        re.compile(r'(/remote\.php/webdav/)[^"\s?]+'),
+        r'\1<PATH>',
+    ),
     # nethcti user names and socket.io session ids. The account is in the
     # retained sample line, the same trade rules 13 and 14 make.
     (
@@ -663,6 +811,12 @@ FOLD_RULES = [
     (
         re.compile(r'(\bconvid )("?)[^"\s]+\2(?=\s|$)'),
         r'\1\2<ID>\2',
+    ),
+    # nethcti's 'streaming "vs_citofono_ingresso" error': the id of a
+    # video source, which the customer chooses. Re-matches its own output.
+    (
+        re.compile(r'(\bstreaming )"[^"]*"(?= (?:error|from)\b)'),
+        r'\1"<ID>"',
     ),
     (
         re.compile(r'(\bws connection from )\S+'),
@@ -694,6 +848,42 @@ FOLD_RULES = [
         re.compile(r'\b(user|session)=<(?:<[^<>\s]*>|[^<>\s])+>'),
         lambda m: m.group(1) + ('=<USER>' if m.group(1) == 'user' else '=<ID>'),
     ),
+    # dovecot's auth process names a request by mechanism or passdb, then
+    # account, client address and session: "auth: Error: plain(alice,
+    # 192.0.2.4,<k++aQPemrXKBQQZ>): ...", also ldap(, pam(, passwd-file(,
+    # and without the session. The name before the parentheses is the
+    # signal and stays. The address field is what tells this shape from
+    # "auth-worker(1234)", which has no comma. Re-matches its own output.
+    (
+        re.compile(r'(\bauth\b.*?: [a-z][a-z0-9-]*)\([^,()\s]*,'
+                   r'([0-9A-Fa-f.:]+|<IP>)?(,<(?:<[^<>\s]*>|[^<>\s])*>)?\)(?=:)'),
+        lambda m: (m.group(1) + '(<USER>,' + ('<IP>' if m.group(2) else '')
+                   + (',<ID>' if m.group(3) else '') + ')'),
+    ),
+    # The mailbox a dovecot error is about: "Error: Mailbox Shared/alice/
+    # Clienti: Deleting corrupted cache record". Users name their folders,
+    # after customers and people, and a name may hold spaces, so it runs
+    # to dovecot's ": ". "Error: Mailbox doesn't exist: <name>" is
+    # dovecot's own sentence, folded by the rule after this one.
+    (
+        re.compile(r"(\b(?:Error|Warning|Info|Debug|Fatal|Panic): Mailbox )"
+                   r"(?!(?:doesn't|isn't|is|was|not|already|has)\b).+?(?=: )"),
+        r'\1<PATH>',
+    ),
+    (
+        re.compile(r"(\bMailbox doesn't exist: ).+?(?= \(|$)"),
+        r'\1<PATH>',
+    ),
+    # The same name after a preposition, as dovecot and sieve write it:
+    # "in mailbox Shared/alice/Clienti", "into mailbox 'Junk'", and lmtp's
+    # "save failed to Junk: ...". Quoted, the quotes stay; unquoted, it
+    # runs to the ": " that ends it, or else is one word.
+    (
+        re.compile(r"(\b(?:in|into|to|from) mailbox |\bsave failed to )"
+                   r"(?:(['\"])(?:(?!\2).)*\2|[^\s'\":,]+(?: [^\s'\":,]+)*?(?=: )"
+                   r"|[^\s'\":,]+)"),
+        lambda m: m.group(1) + (m.group(2) or '') + '<PATH>' + (m.group(2) or ''),
+    ),
     # dovecot's post-login script prefixes its message with the pid of the
     # mail process: "imap-postlogin: Error: <12345>impersonated login". Also
     # takes the masked forms, so stored lines fold too, and its own output.
@@ -706,6 +896,18 @@ FOLD_RULES = [
     (
         re.compile(r'(/var/lib/vmail/)[^/\s,;:()\'"]+'),
         r'\1<USER>',
+    ),
+    # The folders below it, which the user named, and the message files,
+    # named after time and host. A folder may hold spaces, but only one
+    # that another "/" follows: the last component ends at a space. A
+    # mUTF-7 name holds ",", and a message file ":2,S", so those count
+    # unless a space follows. See _fold_vmail_folders.
+    (
+        re.compile(r'(/var/lib/vmail/<USER>)((?:/(?:'
+                   r'(?:[^/\s;:()\'",]|[:,](?!\s|$))+'
+                   r'(?: (?:[^/\s;:()\'",]|[:,](?!\s|$))+)*(?=/)'
+                   r'|(?:[^/\s;:()\'",]|[:,](?!\s|$))+))+)'),
+        _fold_vmail_folders,
     ),
 ]
 
