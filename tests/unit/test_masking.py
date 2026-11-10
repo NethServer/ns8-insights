@@ -2021,5 +2021,44 @@ def test_v28_other_lines_are_kept(collector, line):
     assert collector.mask(line) == line
 
 
-def test_v28_masking_version(collector):
-    assert collector.MASKING_VERSION == 28
+# --------------------------------------------------------------------------
+# Masking version 29: LDAP distinguished names and the values of LDAP
+# filter assertions name the account and the directory domain.
+# --------------------------------------------------------------------------
+
+@pytest.mark.parametrize("raw, expected", [
+    ('"args":["(&(&(|(objectclass=person)))(|(sAMAccountName=lucag)'
+     '(userPrincipalName=lucag)))","DC=ad,DC=example,DC=it"]',
+     '"args":["(&(&(|(objectclass=person)))(|(sAMAccountName=<USER>)'
+     '(userPrincipalName=<USER>)))","<DATA>"]'),
+    ('\\"(|(sAMAccountName=lucag))\\",\\"DC=ad,DC=example,DC=it\\"',
+     '\\"(|(sAMAccountName=<USER>))\\",\\"<DATA>\\"'),
+    ("bind failed for CN=Mario Rossi,OU=Users,DC=ad,DC=example,DC=com: "
+     "invalid credentials",
+     "bind failed for <DATA>: invalid credentials"),
+    ('conn=1001 op=2 BIND dn="uid=alice,ou=People,dc=example,dc=org" '
+     'method=128',
+     'conn=<NUM> op=<NUM> BIND dn="<DATA>" method=<NUM>'),
+    ("search base dc=example,dc=org scope 2",
+     "search base <DATA> scope <NUM>"),
+    ("(&(objectClass=posixGroup)(member=uid=bob,ou=People,dc=example,"
+     "dc=org))",
+     "(&(objectClass=posixGroup)(member=<DATA>))"),
+    ("(|(cn=*)(mail=mario.rossi*))", "(|(cn=*)(mail=<USER>))"),
+])
+def test_v29_ldap_names_are_masked(collector, raw, expected):
+    assert collector.mask(raw) == expected
+    assert collector.mask(expected) == expected
+
+
+@pytest.mark.parametrize("line", [
+    "Deleting corrupted cache record uid=<NUM>: UID <NUM>",
+    "(&(objectclass=person)(objectCategory=user))",
+    "user=<USER>, method=PLAIN, rip=<IP>",
+])
+def test_v29_other_lines_are_kept(collector, line):
+    assert collector.mask(line) == line
+
+
+def test_v29_masking_version(collector):
+    assert collector.MASKING_VERSION == 29

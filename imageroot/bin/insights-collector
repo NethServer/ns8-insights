@@ -392,7 +392,11 @@ def sanitize_line(raw):
 # into sales: ...". Each of its formats (_CHAT_SHAPES) folds the account
 # to <USER>, a CTI group or its room to <DATA> and a guest, room or push
 # node id to <ID>.
-MASKING_VERSION = 28
+#
+# 29: LDAP distinguished names become <DATA> (rule 1c) and the value of a
+# filter assertion on an account attribute, "(sAMAccountName=alice)",
+# becomes <USER> (rule 1d). Nextcloud's LDAP stack traces carried both.
+MASKING_VERSION = 29
 
 # Placeholders already present in the input are left alone, which is what
 # makes mask() idempotent. Listed here so one rule can protect all of them.
@@ -1151,6 +1155,29 @@ MASKING_RULES = [
                    r'(?!\w)(?![:-][0-9a-fA-F]{2}\b)'
                    r'|(?<![\w.])[0-9a-fA-F]{4}\.[0-9a-fA-F]{4}\.[0-9a-fA-F]{4}(?!\w|\.\w)'),
         '<MAC>',
+    ),
+    # 1c. LDAP distinguished names, "CN=Mario Rossi,OU=Users,DC=ad,DC=
+    #     example,DC=com" and "dc=example,dc=org". They name the account and
+    #     the customer's directory domain. Anchored on the trailing dc=
+    #     components every NS8 directory ends with, so an RDN value may hold
+    #     spaces without the rule running on into the text after it. Before
+    #     rule 1d, so a DN inside a filter, "(member=uid=alice,...)", goes
+    #     whole.
+    (
+        re.compile(r'(?<!\w)(?:(?:cn|ou|uid|o|l)=[^,=\"\\()<>]+?,\s?)*'
+                   r'dc=[\w-]+(?:,\s?dc=[\w-]+)*', re.IGNORECASE),
+        '<DATA>',
+    ),
+    # 1d. The value of an LDAP filter assertion on an account or person
+    #     attribute, as Nextcloud and SSSD log their searches:
+    #     "(|(sAMAccountName=alice)(userPrincipalName=alice))". The
+    #     attribute stays, so the shape of the search survives; a presence
+    #     test, "(cn=*)", is kept as is.
+    (
+        re.compile(r'\((sAMAccountName|userPrincipalName|uid|cn|mail'
+                   r'|displayName|givenName|sn|memberUid|member)='
+                   r'(?!\*\))[^()<>]+\)', re.IGNORECASE),
+        r'(\1=<USER>)',
     ),
     # 2. ISO-8601 timestamps. Before clock times, which are a prefix of them.
     #    The hour may have one digit: MariaDB pads it with a space instead
