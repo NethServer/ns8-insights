@@ -205,19 +205,15 @@
                     }}
                   </span>
                 </cv-data-table-cell>
-                <cv-data-table-cell class="table-overflow-menu-cell">
-                  <cv-overflow-menu
+                <cv-data-table-cell class="list-cell">
+                  <NsButton
                     v-if="logSearchTexts(row).length"
-                    flip-menu
-                    class="table-overflow-menu"
-                  >
-                    <cv-overflow-menu-item @click="searchInLogs(row)">
-                      <NsMenuItem
-                        :icon="Search20"
-                        :label="$t('insights.search_in_logs')"
-                      />
-                    </cv-overflow-menu-item>
-                  </cv-overflow-menu>
+                    kind="ghost"
+                    size="small"
+                    :icon="Search16"
+                    @click="searchInLogs(row)"
+                    >{{ $t("insights.search_in_logs") }}
+                  </NsButton>
                 </cv-data-table-cell>
                 <template slot="expandedContent">
                   <div class="finding-details">
@@ -306,7 +302,7 @@ import {
 } from "@nethserver/ns8-ui-lib";
 import Restart20 from "@carbon/icons-vue/es/restart/20";
 import Settings20 from "@carbon/icons-vue/es/settings/20";
-import Search20 from "@carbon/icons-vue/es/search/20";
+import Search16 from "@carbon/icons-vue/es/search/16";
 
 const SEVERITY_ORDER = { critical: 0, high: 1, medium: 2, low: 3 };
 const MASK_PLACEHOLDER = /<[A-Z][A-Z0-9_]*>/;
@@ -334,7 +330,7 @@ export default {
       },
       Restart20,
       Settings20,
-      Search20,
+      Search16,
       urlCheckInterval: null,
       isConfigLoaded: false,
       enabled: false,
@@ -725,16 +721,6 @@ export default {
 .details-label {
   font-weight: bold;
   margin-bottom: $spacing-02;
-}
-
-.table-overflow-menu-cell {
-  position: relative;
-}
-
-.table-overflow-menu {
-  position: absolute;
-  top: 4px;
-  right: 1rem;
 }
 
 .evidence {
