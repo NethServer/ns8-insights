@@ -76,7 +76,11 @@ READ_LAG_SECONDS = 30
 # the rl1 dev fleet: Prometheus's own GC/compaction chatter and its WAL
 # checkpoint line, Postgres/TimescaleDB checkpoint completion (which shares
 # the same "checkpoint complete" wording Prometheus uses), rspamd's
-# per-item timing log, and Alloy/promtail's per-node evaluation log.
+# per-item timing log, and Alloy/promtail's per-node evaluation log. And
+# firewalld's "ERROR: INVALID_SERVICE: nethvoice61": the core's
+# add-public-service action asks for a module's service before creating
+# it, so every new instance logs it, and destroy-module may log it again.
+# The action expects that answer; nothing is left broken.
 #
 # This list becomes the `!~` stage in Client.tail (built by
 # _filter_stages), a line filter applied to the raw journal JSON --
@@ -96,6 +100,7 @@ DENYLIST = [
     "checkpoint complete",
     "finalize_item: slow",
     "finished node evaluation",
+    "ERROR: INVALID_SERVICE",
 ]
 
 # Field names in the cluster/subscription Redis hash, as written by the

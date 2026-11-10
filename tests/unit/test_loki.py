@@ -9,6 +9,7 @@ method is monkeypatched to return canned payloads and record what it was
 called with.
 """
 import datetime
+import json
 import re
 
 import pytest
@@ -47,6 +48,19 @@ def test_filter_stages_denylist_appended_only_when_non_empty(collector):
 
     stages_empty = collector._filter_stages([], "id")
     assert not any(stage.startswith("!~") for stage in stages_empty)
+
+
+def test_denylist_drops_firewalld_invalid_service(collector):
+    raw = json.dumps({"PRIORITY": "3", "SYSLOG_IDENTIFIER": "firewalld",
+                      "MESSAGE": "ERROR: INVALID_SERVICE: nethvoice61"})
+    assert re.search("|".join(collector.DENYLIST), raw)
+
+
+def test_denylist_entries_fit_the_line_filter(collector):
+    """Joined into one regex over the raw JSON: no quotes, no anchors and
+    no regex metacharacters."""
+    for pattern in collector.DENYLIST:
+        assert not re.search(r'["\\^$.*+?()\[\]{}|]', pattern), pattern
 
 
 def test_filter_stages_include_message(collector):
