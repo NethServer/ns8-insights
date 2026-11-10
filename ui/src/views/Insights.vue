@@ -262,11 +262,23 @@
                     <div class="details-label">
                       {{ $t("insights.evidence") }}
                     </div>
-                    <pre
-                      v-if="row.evidence && row.evidence.length"
-                      class="evidence"
-                      >{{ row.evidence.join("\n") }}</pre
-                    >
+                    <template v-if="row.evidence && row.evidence.length">
+                      <div
+                        v-for="(line, index) in row.evidence"
+                        :key="index"
+                        class="evidence-line"
+                      >
+                        <pre class="evidence">{{ line }}</pre>
+                        <NsButton
+                          v-if="logSearchText(line)"
+                          kind="ghost"
+                          size="small"
+                          :icon="Search16"
+                          @click="searchInLogs(row, line)"
+                          >{{ $t("insights.search_in_logs") }}
+                        </NsButton>
+                      </div>
+                    </template>
                     <div v-else>{{ $t("insights.no_evidence") }}</div>
                   </div>
                 </template>
@@ -292,8 +304,12 @@ import {
 } from "@nethserver/ns8-ui-lib";
 import Restart20 from "@carbon/icons-vue/es/restart/20";
 import Settings20 from "@carbon/icons-vue/es/settings/20";
+import Search16 from "@carbon/icons-vue/es/search/16";
 
 const SEVERITY_ORDER = { critical: 0, high: 1, medium: 2, low: 3 };
+const MASK_PLACEHOLDER = /<[A-Z][A-Z0-9_]*>/;
+const LOG_SEARCH_MIN_LENGTH = 4;
+const LOG_SEARCH_WINDOW_MS = 24 * 60 * 60 * 1000;
 
 export default {
   name: "Insights",
@@ -315,6 +331,7 @@ export default {
       },
       Restart20,
       Settings20,
+      Search16,
       urlCheckInterval: null,
       isConfigLoaded: false,
       enabled: false,
@@ -407,6 +424,42 @@ export default {
       this.statusFilter = "open";
       this.severityFilter = "all";
       this.securityFilter = "without";
+    },
+    logSearchText(line) {
+      const best = line
+        .replace(/^<\d+>\s*/, "")
+        .replace(/^\[[^\]]*\]\s*/, "")
+        .replace(/(\.\.\.|…)$/, "")
+        .split(MASK_PLACEHOLDER)
+        .flatMap((part) => part.split(/["\\]/))
+        .map((part) => part.replace(/^[\s:,;]+/, "").trim())
+        .reduce((a, b) => (b.length > a.length ? b : a), "");
+      return best.length >= LOG_SEARCH_MIN_LENGTH ? best : "";
+    },
+    searchInLogs(finding, line) {
+      const nodeIds = finding.node_refs?.length
+        ? finding.node_refs.map((node) => node.node_id)
+        : finding.nodes || [];
+      const end = new Date(finding.last_seen);
+      const start = new Date(
+        Math.max(
+          finding.last_seen - LOG_SEARCH_WINDOW_MS,
+          (finding.first_seen || 0) - 60 * 1000
+        )
+      );
+      const query = {
+        searchQuery: this.logSearchText(line),
+        regexp: "false",
+        context: nodeIds.length === 1 ? "node" : "cluster",
+        selectedNodeId: nodeIds.length === 1 ? String(nodeIds[0]) : "",
+        startDate: this.formatDate(start, "yyyy-MM-dd"),
+        startTime: this.formatDate(start, "HH:mm"),
+        endDate: this.formatDate(end, "yyyy-MM-dd"),
+        endTime: this.formatDate(end, "HH:mm"),
+        timezone: "local",
+        autoStartSearch: "true",
+      };
+      this.core.$router.push({ path: "/system-logs", query });
     },
     formatDateTime(value) {
       return new Date(value).toLocaleString(this.$i18n.locale);
@@ -652,6 +705,10 @@ export default {
 .details-label {
   font-weight: bold;
   margin-bottom: $spacing-02;
+}
+
+.evidence-line {
+  margin-bottom: $spacing-03;
 }
 
 .evidence {

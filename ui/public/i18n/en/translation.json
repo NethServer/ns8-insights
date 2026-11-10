@@ -115,6 +115,7 @@
     "occurrence_count": "Times seen",
     "evidence": "Log lines",
     "no_evidence": "No log lines available",
+    "search_in_logs": "Search in logs",
     "no_findings": "No findings",
     "no_findings_description": "Findings appear here after the insights service has analyzed the cluster logs.",
     "no_findings_filtered": "No findings found",

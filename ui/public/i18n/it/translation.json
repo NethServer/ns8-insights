@@ -115,6 +115,7 @@
     "occurrence_count": "Volte rilevato",
     "evidence": "Righe di log",
     "no_evidence": "Nessuna riga di log disponibile",
+    "search_in_logs": "Cerca nei log",
     "no_findings": "Nessun problema",
     "no_findings_description": "Nessun problema trovato nei log del cluster. I problemi compaiono qui dopo che il servizio Insights ha analizzato i dati.",
     "no_findings_filtered": "Nessun problema trovato",
