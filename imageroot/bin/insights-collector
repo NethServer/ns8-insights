@@ -396,7 +396,29 @@ def sanitize_line(raw):
 # 29: LDAP distinguished names become <DATA> (rule 1c) and the value of a
 # filter assertion on an account attribute, "(sAMAccountName=alice)",
 # becomes <USER> (rule 1d). Nextcloud's LDAP stack traces carried both.
-MASKING_VERSION = 29
+#
+# 30: personal data the dev fleet still sent after 29, measured on its
+# 2026-11-10 findings:
+#   1. a PHP stack frame's arguments become <DATA>. WebTop's DAV backend
+#      logged a user's password in "authenticateUser('<user>', '<pw>')",
+#      and Nextcloud's traces named folders shorter than PHP's cut.
+#   2. Nextcloud's JSON "Trace" array becomes <TRACE>: its frames held
+#      every file path the request touched. Its "reqId" becomes <ID>, and
+#      "Could not open file: ", "Insufficient space in " and "Version
+#      file ... has incorrect name format" fold the path to <PATH>.
+#   3. a public share, "/public.php/dav/files/<token>/<path>", keeps its
+#      prefix; the token becomes <ID> and the path <PATH>. The query
+#      values "filePath=", "dir=", "path=", "folder=", an encoded-path
+#      "from=", "term=" and "csrf=" fold too.
+#   4. PostgreSQL's "Key (<columns>)=(<values>)" keeps the columns.
+#   5. "/historycall/.../user/<name>" folds in a whole URL too, not only
+#      after an HTTP method, and so do dovecot's dict keys, "fs_delete(
+#      <name>)" and "/var/lib/dovecot/dict/<dict>/<name>".
+#   6. rspamd's malformed URL and DNS name, both DKIM body hashes and,
+#      on a DKIM line, the selector, which names the sender's company.
+#   7. the user part of a SIP URI, a trunk's name in a channel
+#      ("PJSIP/<trunk>-<seq>") and a quoted convid followed by ":".
+MASKING_VERSION = 30
 
 # Placeholders already present in the input are left alone, which is what
 # makes mask() idempotent. Listed here so one rule can protect all of them.
@@ -642,6 +664,13 @@ def _fold_chat_gateway(match):
             position = found.end(n)
         return match.group(1) + ''.join(out) + message[position:]
     return match.group(0)
+
+
+# A DKIM selector after "s=", as rspamd writes it: "d=example.com;
+# s=selector1-esempio-com" and "{example.com:s=selector1;}". The "s=" must
+# start the line or follow a space, ";", ":" or "{". A placeholder starts
+# with "<", which the value class cannot match, so a second pass keeps it.
+_DKIM_SELECTOR = re.compile(r'((?<![^\s;:{])s=)[A-Za-z0-9._-]+')
 
 # Folds run first, on the whole line, before MASKING_RULES. They exist for
 # the spans a line ECHOES rather than states -- a symbol list, a quoted
@@ -942,7 +971,7 @@ FOLD_RULES = [
     # the call rings. Quoted in some messages; the quotes are kept.
     # Re-matches its own output.
     (
-        re.compile(r'(\bconvid )("?)[^"\s]+\2(?=\s|$)'),
+        re.compile(r'(\bconvid )("?)[^"\s]+\2(?=[\s:,;]|$)'),
         r'\1\2<ID>\2',
     ),
     # nethcti's 'streaming "vs_citofono_ingresso" error': the id of a
@@ -1041,6 +1070,139 @@ FOLD_RULES = [
                    r'(?: (?:[^/\s;:()\'",]|[:,](?!\s|$))+)*(?=/)'
                    r'|(?:[^/\s;:()\'",]|[:,](?!\s|$))+))+)'),
         _fold_vmail_folders,
+    ),
+    # The arguments of a PHP stack frame, "#3 /path/File.php(52):
+    # Class->method('alice', 'secret')": values the code was called with,
+    # a password or a file name among them. WebTop's DAV backend logged
+    # the password it was checking. PHP cuts only strings longer than 15
+    # characters, so a short one went in clear. The frame ends at the line
+    # end, at an escaped newline inside a JSON string, at the string's
+    # quote or at the next frame, which sanitize_line() joined with a
+    # space. "f()" is kept. Re-matches its own output.
+    (
+        re.compile(r'(#(?:\d+|<NUM>) (?:\S+\((?:\d+|<NUM>|<PID>)\)'
+                   r'|\[internal function\]): [^\s(]+\()(?!\))(.*?)\)'
+                   r'(?=\s*$|\\+n|\\*"| #(?:\d+|<NUM>) )'),
+        r'\1<DATA>)',
+    ),
+    # Nextcloud's JSON exception holds its stack trace as an array of
+    # frames, each with the arguments of the call: file paths, folder
+    # names, query parameters. The exception, its message, file and line
+    # stay. The array ends where "File" follows it, at any escape level.
+    (
+        re.compile(r'(\\*"Trace\\*":)\[.*?\](?=,\\*"File\\*":)'),
+        r'\1<TRACE>',
+    ),
+    # Nextcloud's request id, random per request. The opaque-id rule
+    # misses the ones whose case switches too rarely.
+    (
+        re.compile(r'("reqId":")[^"]+(?=")'),
+        r'\1<ID>',
+    ),
+    # Nextcloud's messages that name a user's file or folder. Each runs to
+    # the syntax that ends it: the file id in parentheses, the end of the
+    # JSON string, the rest of the sentence.
+    (
+        re.compile(r'(\bCould not open file: ).+?(?= \((?:\d+|<NUM>|<PID>)\))'),
+        r'\1<PATH>',
+    ),
+    (
+        re.compile(r'(\bInsufficient space in )[^"\\]+'),
+        r'\1<PATH>',
+    ),
+    (
+        re.compile(r'(\bVersion file ).+?(?= has incorrect name format)'),
+        r'\1<PATH>',
+    ),
+    # A Nextcloud public share: the token opens it, the path names its
+    # files. Same shape as the WebDAV rule above.
+    (
+        re.compile(r'(/public\.php/dav/files/)[^/"\s?]+(/[^"\s?]*)?'),
+        lambda m: m.group(1) + '<ID>' + (
+            '' if m.group(2) is None else '/' if m.group(2) == '/' else '/<PATH>'),
+    ),
+    # Query values that name a file, a folder, a search or a session:
+    # OnlyOffice's "filePath=", Nextcloud's "dir=" and its search "term=",
+    # the "from=" page a search was started on when it is an encoded path,
+    # WebTop's "folder=" and "csrf=". Re-matches its own output.
+    (
+        re.compile(r'([?&](?:filePath|dir|path|folder)=)[^&\s"\]#]+'),
+        r'\1<PATH>',
+    ),
+    (
+        re.compile(r'([?&]from=)%2F[^&\s"\]#]*'),
+        r'\1<PATH>',
+    ),
+    (
+        re.compile(r'([?&]term=)[^&\s"\]#]+'),
+        r'\1<DATA>',
+    ),
+    (
+        re.compile(r'([?&]csrf=)[^&\s"\]#]+'),
+        r'\1<ID>',
+    ),
+    # PostgreSQL's key detail repeats the row's values: "Key (user_id,
+    # key)=(alice, pizza margherita) already exists." The columns stay.
+    (
+        re.compile(r'(\bKey \([^()]*\)=\().*?(?=\) (?:already exists|is not present'
+                   r'|is still referenced|conflicts with))'),
+        r'\1<DATA>',
+    ),
+    # An account in nethcti-middleware's request to the call history,
+    # written as a whole URL, "Get \"http://.../historycall/interval/user/
+    # alice/...\"" or "url=http://...", which the request path rule above
+    # does not reach. Re-matches its own output.
+    (
+        re.compile(r'(/historycall/\S*?/user/)[^/\s?"]+'),
+        r'\1<USER>',
+    ),
+    # dovecot's dict keys, a quota dict's being the account:
+    # "fs_delete(alice) failed: unlink(/var/lib/dovecot/dict/uquota/alice)".
+    (
+        re.compile(r'(\bfs_[a-z_]+\()[^()\s]+(?=\))'),
+        r'\1<DATA>',
+    ),
+    (
+        re.compile(r'(/var/lib/dovecot/dict/[\w-]+/)[^/\s()\'"]+'),
+        r'\1<DATA>',
+    ),
+    # rspamd quotes the URLs it found in a message: a website of whoever
+    # wrote it. A malformed one, "www.example..dbl.org", is no host name
+    # for rule 9.
+    (
+        re.compile(r'(\bcannot send invalid DNS request )\S+'),
+        r'\1<HOST>',
+    ),
+    (
+        re.compile(r"(\bextract of url )'[^']*'"),
+        r"\1'<DATA>'",
+    ),
+    # A DKIM body hash mismatch quotes both hashes, base64 that scrub()
+    # leaves in pieces around a "/".
+    (
+        re.compile(r'(\bbh value mismatch: got )[^,]+(, expected )[^;]+(?=;)'),
+        r'\1<ID>\2<ID>',
+    ),
+    # A DKIM selector, "s=selector1-<company>-onmicrosoft-com", names the
+    # sender's organisation. Only on a line about DKIM: "s=" is too short
+    # a key to fold everywhere. See _DKIM_SELECTOR.
+    (
+        re.compile(r'(?i)^.*dkim.*$'),
+        lambda m: _DKIM_SELECTOR.sub(r'\1<ID>', m.group(0)),
+    ),
+    # The user part of a SIP URI, "sip:alice@192.0.2.1": a scanner tries a
+    # list of names, a template each. A URI without a user stays.
+    (
+        re.compile(r'(\bsips?:)[^@\s;>:"\'<]+(?=@)'),
+        r'\1<USER>',
+    ),
+    # A channel on a trunk, "PJSIP/Trunk_Esempio-0000a1b2": the customer
+    # names a trunk after the carrier or the site. An extension's channel,
+    # "PJSIP/201-...", starts with a digit and is left to the number rules.
+    (
+        re.compile(r'(\b(?:PJSIP|SIP|IAX2)/)[A-Za-z][\w.+-]*?'
+                   r'(?=-(?:[0-9a-fA-F]{8}|<HEX>)\b)'),
+        r'\1<ID>',
     ),
 ]
 

@@ -2060,5 +2060,224 @@ def test_v29_other_lines_are_kept(collector, line):
     assert collector.mask(line) == line
 
 
-def test_v29_masking_version(collector):
-    assert collector.MASKING_VERSION == 29
+# --------------------------------------------------------------------------
+# Masking version 30: personal data the dev fleet still received after
+# version 29. Every value below is made up; only the shapes are real.
+# --------------------------------------------------------------------------
+
+def _masked_twice(collector, line):
+    once = _template(collector, line)
+    assert collector.mask(once) == once
+    return once
+
+
+@pytest.mark.parametrize("raw, expected", [
+    # WebTop's DAV backend logged the password it was checking.
+    ("#3 /usr/share/webtop/webdav/lib/webtop/DAV/Connector/AuthBackend.php(52): "
+     "WT\\DAV\\Bridge->authenticateUser('mario', 'S3cr)t!x')",
+     "#<NUM> /usr/share/webtop/webdav/lib/webtop/DAV/Connector/AuthBackend.php"
+     "(<PID>): WT\\DAV\\Bridge->authenticateUser(<DATA>)"),
+    # A frame inside a JSON string ends at its escaped newline.
+    ("#4 /var/www/html/lib/Sabre/Directory.php(91): "
+     "OCA\\DAV\\File->put('Fatture', Resource id #12)\\n#5 {main}",
+     "#<NUM> /var/www/html/lib/Sabre/Directory.php(<PID>): "
+     "OCA\\DAV\\File->put(<DATA>)\\n#<NUM> {main}"),
+    ("#2 [internal function]: OC\\Files\\View->rename('a/Clienti', 'b')",
+     "#<NUM> [internal function]: OC\\Files\\View->rename(<DATA>)"),
+])
+def test_v30_php_frame_arguments_are_masked(collector, raw, expected):
+    assert _masked_twice(collector, raw) == expected
+
+
+def test_v30_stored_php_frame_arguments_are_masked(collector):
+    stored = ("<3> [webdav] #<NUM> /usr/share/webtop/webdav/lib/webtop/DAV/"
+              "Connector/AuthBackend.php(<PID>): WT\\DAV\\Bridge->"
+              "authenticateUser('<DATA>', 'S3cret!x')")
+    assert collector.mask(stored) == stored.replace(
+        "'<DATA>', 'S3cret!x'", "<DATA>")
+
+
+@pytest.mark.parametrize("line", [
+    "#<NUM> /var/www/html/remote.php(<PID>): OCA\\DAV\\Server->exec()",
+    "#<NUM> {main}",
+])
+def test_v30_php_frames_without_arguments_are_kept(collector, line):
+    assert collector.mask(line) == line
+
+
+NEXTCLOUD_TRACE = (
+    'NOTICE: PHP message: [nextcloud][webdav][1] {"reqId":"Qx7wTnRbaLpKdMzEyHvS",'
+    '"user":"admin","message":"{\\"Exception\\":\\"OC\\\\\\\\DB\\\\\\\\Exceptions'
+    '\\\\\\\\DbalException\\",\\"Message\\":\\"An exception occurred\\",\\"Code\\":0,'
+    '\\"Trace\\":[{\\"file\\":\\"/var/www/html/lib/private/Files/Cache/Cache.php\\",'
+    '\\"line\\":712,\\"function\\":\\"executeStatement\\",\\"args\\":['
+    '\\"UPDATE ...\\",{\\"dcValue1\\":\\"files/Y - Esempio/ARCHIVIO CLIENTI\\"}]},'
+    '{\\"file\\":\\"/var/www/html/remote.php\\",\\"line\\":3,\\"args\\":['
+    '\\"Mario Rossi\\"],\\"function\\":\\"require_once\\"}],'
+    '\\"File\\":\\"/var/www/html/lib/private/DB/Connection.php\\",\\"Line\\":9}"}'
+)
+
+
+def test_v30_nextcloud_trace_is_folded(collector):
+    template = _masked_twice(collector, NEXTCLOUD_TRACE)
+    for leak in ("Esempio", "ARCHIVIO", "Mario", "Qx7wTnRbaLpKdMzEyHvS"):
+        assert leak not in template
+    assert '\\"Trace\\":<TRACE>,\\"File\\":' in template
+    assert '"reqId":"<ID>"' in template
+    assert "DbalException" in template
+
+
+@pytest.mark.parametrize("raw, expected", [
+    ('\\"Message\\":\\"Could not open file: Y - Esempio/files/ARCHIVIO/paghe '
+     "98/azienda (12345), file doesn't seem to exist\\\"",
+     '\\"Message\\":\\"Could not open file: <PATH> (<PID>), file doesn\'t '
+     'seem to exist\\"'),
+    ('\\"Message\\":\\"Insufficient space in /MarioRossi\\",\\"Code\\":0',
+     '\\"Message\\":\\"Insufficient space in <PATH>\\",\\"Code\\":<NUM>'),
+    ('"message":"Version file preventivi has incorrect name format"',
+     '"message":"Version file <PATH> has incorrect name format"'),
+])
+def test_v30_nextcloud_message_paths_are_masked(collector, raw, expected):
+    assert _masked_twice(collector, raw) == expected
+
+
+@pytest.mark.parametrize("raw, expected", [
+    # A public share: the token opens the share, the path names its files.
+    ('"url":"/public.php/dav/files/Hq7Lm2Pz9XwR4tK/Requisiti%20cliente'
+     '/preventivi"',
+     '"url":"/public.php/dav/files/<ID>/<PATH>"'),
+    ('"url":"/public.php/dav/files/Hq7Lm2Pz9XwR4tK"',
+     '"url":"/public.php/dav/files/<ID>"'),
+    ('GET /ocs/v2.php/apps/onlyoffice/api/v1/config/77?filePath=%2FY%20-%20'
+     'Esempio%2Ffiles%2Fricevute.pdf&inframe=true HTTP/1.1',
+     'GET /ocs/v2.php/apps/onlyoffice/api/v1/config/<NUM>?filePath=<PATH>'
+     '&inframe=true HTTP/<NUM>'),
+    ('GET /ocs/v2.php/search/providers/files/search?term=fattura&from='
+     '%2Fapps%2Ffiles%2Ffiles%3Fdir%3D%2FX%2520DATI%2FCLIENTI%2F1234_ESEMPIO'
+     ' HTTP/1.1',
+     'GET /ocs/v2.php/search/providers/files/search?term=<DATA>&from=<PATH>'
+     ' HTTP/<NUM>'),
+    ('GET /index.php/apps/files/?dir=/CLIENTI/Rossi&fileid=12 HTTP/1.1',
+     'GET /index.php/apps/files/?dir=<PATH>&fileid=<NUM> HTTP/<NUM>'),
+    # WebTop's attachment request: a session token and a mail folder.
+    ('[/webtop/service-request?csrf=k3j9x2m7q8w1z5ab&action=GetAttachment'
+     '&folder=Public/preventivi&idmessage=12]',
+     '[/webtop/service-request?csrf=<ID>&action=GetAttachment'
+     '&folder=<PATH>&idmessage=<NUM>]'),
+])
+def test_v30_request_values_are_masked(collector, raw, expected):
+    assert _masked_twice(collector, raw) == expected
+
+
+@pytest.mark.parametrize("line", [
+    "GET /index.php/apps/files/?page=<NUM> HTTP/<NUM>",
+    "GET /historycall/queues/user/<USER>?from=<HEX>&to=<HEX> HTTP/<NUM>",
+    "level=info path=/healthz status=<NUM>",
+])
+def test_v30_other_request_values_are_kept(collector, line):
+    assert collector.mask(line) == line
+
+
+@pytest.mark.parametrize("raw, expected", [
+    ("DETAIL: Key (domain_id, user_id, service_id, context, key)=(NethServer, "
+     "alice, com.sonicle.webtop.contacts, mainsearch, pizza margherita) "
+     "already exists.",
+     "DETAIL: Key (domain_id, user_id, service_id, context, key)=(<DATA>) "
+     "already exists."),
+    ('DETAIL: Key (user_id)=(mario (old)) is not present in table "users".',
+     'DETAIL: Key (user_id)=(<DATA>) is not present in table "users".'),
+])
+def test_v30_postgres_key_values_are_masked(collector, raw, expected):
+    assert _masked_twice(collector, raw) == expected
+
+
+@pytest.mark.parametrize("raw, expected", [
+    ('Failed to fetch legacy history: Get "http://10.5.4.1:20000/historycall/'
+     'interval/user/reception1/20261028/20261028?direction=lost": dial tcp',
+     'Failed to fetch legacy history: Get "http://<IP>:<PORT>/historycall/'
+     'interval/user/<USER>/<HEX>/<HEX>?direction=lost": dial tcp'),
+    ("request failed method=GET url=http://10.5.4.1:20000/historycall/interval"
+     "/user/mariorossi/20261104/20261105?offset=0 requester=bob",
+     "request failed method=GET url=http://<IP>:<PORT>/historycall/interval"
+     "/user/<USER>/<HEX>/<HEX>?offset=<NUM> requester=<USER>"),
+])
+def test_v30_historycall_user_is_masked(collector, raw, expected):
+    assert _masked_twice(collector, raw) == expected
+
+
+def test_v30_dovecot_dict_key_is_masked(collector):
+    raw = ("doveadm(192.0.2.4): Error: dict_transaction_commit() failed: "
+           "fs_delete(alice) failed: unlink(/var/lib/dovecot/dict/uquota/"
+           "alice) failed: No such file or directory")
+    assert _masked_twice(collector, raw) == (
+        "doveadm(<IP>): Error: dict_transaction_commit() failed: "
+        "fs_delete(<DATA>) failed: unlink(/var/lib/dovecot/dict/uquota/"
+        "<DATA>) failed: No such file or directory")
+
+
+@pytest.mark.parametrize("raw, expected", [
+    ("(normal) <512a21>; lua; rbl.lua:411: cannot send invalid DNS request "
+     "www.studioesempio..dbl.example.org for DBL: two dots in a row",
+     "(normal) <HEX>; lua; rbl.lua:<NUM>: cannot send invalid DNS request "
+     "<HOST> for DBL: two dots in a row"),
+    ("(normal) <512a21>; task; html_url_is_phished: extract of url "
+     "'http://www.studioesempio.' failed: TLD part is not detected",
+     "(normal) <HEX>; task; html_url_is_phished: extract of url "
+     "'<DATA>' failed: TLD part is not detected"),
+    # A DKIM selector names the sending company; the body hashes are
+    # base64, which scrub() leaves in pieces around a "/".
+    ("(normal) <512a21>; dkim; rspamd_dkim_check: dkim: bh value mismatch: "
+     "got qW3rTyUiOpAsDfGhJkLzX/tW0Kk3Jr=, expected nd9im2n/Ab1Cd2=; "
+     "body length 12->12; d=example.com; s=selector1-esempio-onmicrosoft-com",
+     "(normal) <HEX>; dkim; rspamd_dkim_check: dkim: bh value mismatch: "
+     "got <ID>, expected <ID>; body length <NUM>-><NUM>; d=<HOST>; s=<ID>"),
+    ("R_DKIM_REJECT(1.00){example.com:s=selector2-esempio-com;}",
+     "R_DKIM_REJECT(<NUM>){<HOST>:s=<ID>;}"),
+])
+def test_v30_rspamd_message_data_is_masked(collector, raw, expected):
+    assert _masked_twice(collector, raw) == expected
+
+
+@pytest.mark.parametrize("raw, expected", [
+    # Scanners try a list of names; each made a template.
+    ("[R-BLOCKIP:abc@192.0.2.1]: blocking INVITE from sip:brian@192.0.2.9 "
+     "(IP:192.0.2.9:5060)",
+     "[R-BLOCKIP:abc@<IP>]: blocking INVITE from sip:<USER>@<IP> "
+     "(IP:<IP>:<PORT>)"),
+    ("Contact: <sip:mario@10.0.0.5:5060>",
+     "Contact: <sip:<USER>@<IP>:<PORT>>"),
+])
+def test_v30_sip_user_is_masked(collector, raw, expected):
+    assert _masked_twice(collector, raw) == expected
+
+
+@pytest.mark.parametrize("line", [
+    "sending OPTIONS to sip:<IP>:<PORT>",
+    "Contact: <sip:<IP>:<PORT>;transport=udp>",
+])
+def test_v30_sip_without_user_is_kept(collector, line):
+    assert collector.mask(line) == line
+
+
+@pytest.mark.parametrize("raw, expected", [
+    # The convid rule needed a space after the closing quote; nethcti
+    # follows it with a colon.
+    ('[proxy_logic_] attended transfer convid "PJSIP/Trunk_Esempio-0000a1b2'
+     '>PJSIP/201-0000a1b3": no conversation present in extension 201',
+     '[proxy_logic_] attended transfer convid "<ID>": no conversation '
+     'present in extension <NUM>'),
+    # A trunk is named by the customer, often after the carrier or a site.
+    ("Channel PJSIP/Trunk_Esempio-0000a1b2 hung up",
+     "Channel PJSIP/<ID>-<HEX> hung up"),
+])
+def test_v30_trunk_names_are_masked(collector, raw, expected):
+    assert _masked_twice(collector, raw) == expected
+
+
+def test_v30_extension_channels_are_kept(collector):
+    line = "Channel PJSIP/<NUM>-<HEX> hung up"
+    assert collector.mask(line) == line
+
+
+def test_v30_masking_version(collector):
+    assert collector.MASKING_VERSION == 30

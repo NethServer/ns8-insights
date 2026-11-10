@@ -150,9 +150,11 @@ read: `scrub()` removes likely secrets (`password=`, `token=`, `api_key=`,
 `Authorization` headers, long base64 runs, email addresses) and `mask()`
 replaces variable text (timestamps, PIDs, addresses, UUIDs and similar).
 `mask()` also replaces the personal data the known log formats carry:
-account names (SSH, mail, nextcloud, NethCTI), mailbox and folder names,
-nextcloud file paths, phonebook contacts and searches, and data dumps such
-as FreePBX's user directory or the bytes of a probe. Each template carries at most two example lines, truncated to 512
+account names (SSH, mail, nextcloud, NethCTI, SIP), mailbox and folder
+names, nextcloud file paths, share tokens and searches, phonebook contacts
+and searches, PHP stack frame arguments, database key values, DKIM
+selectors, trunk names, and data dumps such as FreePBX's user directory or
+the bytes of a probe. Each template carries at most two example lines, truncated to 512
 characters. This is defence in depth, not a guarantee.
 
 One piece of identifying data is sent on purpose: the **node roster**
