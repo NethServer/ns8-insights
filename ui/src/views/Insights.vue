@@ -54,7 +54,7 @@
                 :clear-aria-label="core.$t('common.clear_search')"
               ></cv-search>
             </div>
-            <div class="status-filter">
+            <div class="filter">
               <cv-select
                 v-model="statusFilter"
                 :label="$t('insights.status_filter')"
@@ -65,6 +65,32 @@
                   :key="opt"
                   :value="opt"
                   >{{ $t("insights.status_" + opt) }}</cv-select-option
+                >
+              </cv-select>
+            </div>
+            <div class="filter">
+              <cv-select
+                v-model="severityFilter"
+                :label="$t('insights.severity_filter')"
+              >
+                <cv-select-option
+                  v-for="opt in severityOptions"
+                  :key="opt"
+                  :value="opt"
+                  >{{ $t("insights.severity_" + opt) }}</cv-select-option
+                >
+              </cv-select>
+            </div>
+            <div class="filter">
+              <cv-select
+                v-model="securityFilter"
+                :label="$t('insights.security_filter')"
+              >
+                <cv-select-option
+                  v-for="opt in securityOptions"
+                  :key="opt"
+                  :value="opt"
+                  >{{ $t("insights.security_" + opt) }}</cv-select-option
                 >
               </cv-select>
             </div>
@@ -79,7 +105,7 @@
           <NsDataTable
             :allRows="filteredFindings"
             :columns="i18nTableColumns"
-            :rawColumns="tableColumns"
+            :rawColumns="sortColumns"
             :sortable="true"
             :pageSizes="[10, 25, 50, 100]"
             :isSearchable="false"
@@ -102,7 +128,7 @@
           >
             <template slot="empty-state">
               <NsEmptyState
-                v-if="searchFilter.trim()"
+                v-if="findings.length"
                 :title="$t('insights.no_findings_filtered')"
               >
                 <template #description>
@@ -290,12 +316,24 @@ export default {
       searchFilter: "",
       statusFilter: "open",
       statusOptions: ["open", "stale", "all"],
+      severityFilter: "all",
+      severityOptions: ["all", "critical", "high", "medium", "low"],
+      securityFilter: "without",
+      securityOptions: ["without", "only", "all"],
       tablePage: [],
       tableColumns: [
         "severity",
         "title",
         "modules",
         "nodes",
+        "occurrence_count",
+        "last_seen",
+      ],
+      sortColumns: [
+        "severity_rank",
+        "title",
+        "modules_text",
+        "nodes_text",
         "occurrence_count",
         "last_seen",
       ],
@@ -318,12 +356,25 @@ export default {
     },
     filteredFindings() {
       const q = this.searchFilter.trim().toLowerCase();
-      if (!q) {
-        return this.findings;
-      }
-      return this.findings.filter((finding) =>
-        this.findingSearchText(finding).includes(q)
-      );
+      return this.findings
+        .filter(
+          (finding) =>
+            this.severityFilter === "all" ||
+            finding.severity === this.severityFilter
+        )
+        .filter(
+          (finding) =>
+            this.securityFilter === "all" ||
+            !!finding.security === (this.securityFilter === "only")
+        )
+        .filter((finding) => !q || this.findingSearchText(finding).includes(q))
+        .map((finding) => ({
+          ...finding,
+          severity_rank: SEVERITY_ORDER[finding.severity] ?? 9,
+          modules_text: this.formatModules(finding),
+          nodes_text: this.formatNodes(finding),
+          occurrence_count: finding.occurrence_count || 1,
+        }));
     },
   },
   watch: {
@@ -536,7 +587,7 @@ export default {
   min-width: 14rem;
 }
 
-.status-filter {
+.filter {
   flex: 1;
   min-width: 10rem;
 }
