@@ -386,7 +386,13 @@ def sanitize_line(raw):
 # "was", "has", "does", "doesn't", "unknown", "already", "cannot",
 # "can't" -- stays. Rule 14 took it for a name, so dovecot's "user not
 # found from any userdbs" read "user <USER> found", the opposite.
-MASKING_VERSION = 27
+#
+# 28: NethVoice's chat gateway names the account in most of its lines,
+# "acrobits alice: whoami: ...", "push token alice: ...", "groups: alice
+# into sales: ...". Each of its formats (_CHAT_SHAPES) folds the account
+# to <USER>, a CTI group or its room to <DATA> and a guest, room or push
+# node id to <ID>.
+MASKING_VERSION = 28
 
 # Placeholders already present in the input are left alone, which is what
 # makes mask() idempotent. Listed here so one rule can protect all of them.
@@ -526,6 +532,112 @@ def _fold_vmail_folders(match):
         if not (component == '<PATH>' and out and out[-1] == '<PATH>'):
             out.append(component)
     return match.group(1) + ''.join('/' + c for c in out)
+
+
+# NethVoice's chat gateway (nethesis/ns8-nethvoice, ejabberd/) writes
+# its messages as "<topic> <account>: <error>", "groups: <alice> into
+# <sales>: ...", so the account, the CTI group a room is named after and
+# the sender's display name reach the log in clear. Each shape below is
+# one of its log.Printf formats; a slot is {u} an account or JID, {d} a
+# CTI group or its room, {i} a guest, room or push node id, {q} a quoted
+# name, {n} a display name in parentheses, {l} a member list, and {m} a
+# word that is kept: an HTTP method, an affiliation, a verb. The first shape that matches the start of the
+# message wins, so a longer shape goes before a shorter one.
+_CHAT_SLOTS = {
+    'u': (r'[^\s:,()]+', '<USER>'),
+    'd': (r'[^\s:,()]+', '<DATA>'),
+    'i': (r'[^\s:,()]+', '<ID>'),
+    'q': (r'"(?:[^"\\]|\\.)*"', '"<DATA>"'),
+    'n': (r'[^()]*', '<USER>'),
+    'l': (r'\[[^\]]*\]', '[<USER>]'),
+    'm': (r'[A-Za-z]+', None),
+}
+_CHAT_SHAPES = [
+    'acrobits {u}: token belongs to {u}',
+    'acrobits {u}: ',
+    'push web {u}: from {u} ({n}), HTTP ',
+    'push web {u}: ',
+    'push pnm {u}: from {u}, id {i}, HTTP ',
+    'push pnm {u}: ',
+    'push token {u}: ',
+    'push: archive id for {u} with {u}: ',
+    'push: archive id for {u}: ',
+    'push: room name for {q}: ',
+    'push: room name for {d}: ',
+    'push: publish from {u} refused',
+    'push: delivery to {i} panicked',
+    'push: too many deliveries in flight, {i} dropped',
+    'push: unknown node {q}',
+    'push {u}: DND, skipped',
+    'purge {u} with {u}: ',
+    'archive of {u} with {u} purged',
+    'web subscribe {u}: ',
+    'web unsubscribe {u}: ',
+    'fetch {u}: ',
+    'send {u}: ',
+    'delete {u}: ',
+    'account removal {u}: ',
+    'conversations {u}: ',
+    'search {u}: ',
+    'groups {u}: ',
+    'groups: destroy {d}: ',
+    'groups: create {d}: ',
+    'groups: subscribe {u} to {d}: ',
+    'groups: room for {q} with ',
+    'groups: {d} has an {m} ({u}), not made by the gateway',
+    'groups: {d} deleted in the CTI',
+    'groups: {d} now {l}',
+    'groups: {u} into {d}: ',
+    'groups: {u} out of {d}',
+    'groups: {d}: ',
+    'revoked: kick {u}: ',
+    'revoked: {u} has no chat any more',
+    'users: retire {u}: ',
+    'users: {u} out of {d}: ',
+    'users: {u} is back',
+    'users: {u} is not in the CTI',
+    'users: {u} retired (',
+    'users: {u} now owns {d}',
+    'guests: create room for {u}: ',
+    'guests: upload slot for {i}: ',
+    'guests: join notice {i}: ',
+    'guests: {i} is gone',
+    'guests: {m} {i}: ',
+    'extauth: {u} has no chat permission',
+    'http {m} /conversations/{u} -> ',
+    'http {m} /push/web/{i} -> ',
+    'http {m} /guests/{i}/link -> ',
+    'http {m} /guests/{i}/{i} -> ',
+    'http {m} /guests/{i} -> ',
+]
+
+
+def _compile_chat_shape(shape):
+    parts = re.split(r'\{([a-z])\}', shape)
+    pattern = ''.join(
+        '(' + _CHAT_SLOTS[part][0] + ')' if n % 2 else re.escape(part)
+        for n, part in enumerate(parts))
+    return re.compile(pattern), parts[1::2]
+
+
+_CHAT_SHAPE_RULES = [_compile_chat_shape(shape) for shape in _CHAT_SHAPES]
+
+
+def _fold_chat_gateway(match):
+    message = match.group(2)
+    for pattern, slots in _CHAT_SHAPE_RULES:
+        found = pattern.match(message)
+        if not found:
+            continue
+        out, position = [], 0
+        for n, slot in enumerate(slots, 1):
+            replacement = _CHAT_SLOTS[slot][1]
+            if replacement is None:
+                continue
+            out.append(message[position:found.start(n)] + replacement)
+            position = found.end(n)
+        return match.group(1) + ''.join(out) + message[position:]
+    return match.group(0)
 
 # Folds run first, on the whole line, before MASKING_RULES. They exist for
 # the spans a line ECHOES rather than states -- a symbol list, a quoted
@@ -792,6 +904,13 @@ FOLD_RULES = [
     (
         re.compile(r'(/remote\.php/webdav/)[^"\s?]+'),
         r'\1<PATH>',
+    ),
+    # NethVoice's chat gateway: see _CHAT_SHAPES. Only on a nethvoice line,
+    # since "send <x>: " or "fetch <x>: " could be anything elsewhere.
+    # Re-matches its own output: a placeholder fits every slot.
+    (
+        re.compile(r'^(\s*\[nethvoice\d*\] )(.*)$'),
+        _fold_chat_gateway,
     ),
     # nethcti user names and socket.io session ids. The account is in the
     # retained sample line, the same trade rules 13 and 14 make.

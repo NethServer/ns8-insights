@@ -1943,5 +1943,83 @@ def test_v27_names_like_sentence_words_are_masked(collector, raw, expected):
     assert collector.mask(raw) == expected
 
 
-def test_v27_masking_version(collector):
-    assert collector.MASKING_VERSION == 27
+# --------------------------------------------------------------------------
+# Masking version 28: NethVoice's chat gateway names the account, the CTI
+# group and the sender in most of its lines.
+# --------------------------------------------------------------------------
+
+@pytest.mark.parametrize("raw, expected", [
+    ('acrobits anna.rossi: whoami: Get "http://10.5.4.1:20107/user/me": '
+     'context deadline exceeded (Client.Timeout exceeded while awaiting '
+     'headers)',
+     'acrobits <USER>: whoami: Get "http://<IP>:<PORT>/user/me": '
+     'context deadline exceeded (<HOST> exceeded while awaiting headers)'),
+    ("acrobits giuseppes: token belongs to mario.rossi",
+     "acrobits <USER>: token belongs to <USER>"),
+    ("acrobits giuseppes: login: not-authorized",
+     "acrobits <USER>: login: not-authorized"),
+    ("push web giuseppes: from mario@chat.example.com (Mario Rossi), HTTP 410",
+     "push web <USER>: from <USER> (<USER>), HTTP <NUM>"),
+    ("push pnm giuseppes: from mario, id 8f7a6b, HTTP 500",
+     "push pnm <USER>: from <USER>, id <ID>, HTTP <NUM>"),
+    ("push token giuseppes: enable: timeout",
+     "push token <USER>: enable: timeout"),
+    ("push: archive id for alice with bob: no rows",
+     "push: archive id for <USER> with <USER>: no rows"),
+    ('push: room name for "cti-commerciale": not found',
+     'push: room name for "<DATA>": not found'),
+    ("push alice: DND, skipped", "push <USER>: DND, skipped"),
+    ("purge alice with bob: timeout", "purge <USER> with <USER>: timeout"),
+    ("fetch alice: timeout", "fetch <USER>: timeout"),
+    ("account removal alice: timeout", "account removal <USER>: timeout"),
+    ("groups: alice into commerciale: item-not-found",
+     "groups: <USER> into <DATA>: item-not-found"),
+    ("groups: alice out of commerciale", "groups: <USER> out of <DATA>"),
+    ("groups: commerciale now [alice bob carla]",
+     "groups: <DATA> now [<USER>]"),
+    ('groups: room for "Ufficio Tecnico" with 4 members',
+     'groups: room for "<DATA>" with <NUM> members'),
+    ("groups: cti-sales has an owner (alice@chat.example.com), not made by "
+     "the gateway: made again",
+     "groups: <DATA> has an owner (<USER>), not made by the gateway: "
+     "made again"),
+    ("users: alice out of cti-sales: timeout",
+     "users: <USER> out of <DATA>: timeout"),
+    ("users: alice is not in the CTI any more: disconnected",
+     "users: <USER> is not in the CTI any more: disconnected"),
+    ("revoked: alice has no chat any more: disconnected",
+     "revoked: <USER> has no chat any more: disconnected"),
+    ("guests: send x7Fq9aZ: timeout", "guests: send <ID>: timeout"),
+    ("http DELETE /conversations/alice -> 500",
+     "http DELETE /conversations/<USER> -> <NUM>"),
+    ("http POST /guests/abc123/link -> 403",
+     "http POST /guests/<ID>/link -> <NUM>"),
+])
+@pytest.mark.parametrize("identifier", ["nethvoice", "nethvoice5"])
+def test_v28_chat_gateway_is_masked(collector, raw, expected, identifier):
+    template = _template(collector, "<3> [{0}] {1}".format(identifier, raw))
+    assert template == "<3> [nethvoice] " + expected
+    assert collector.mask(template) == template
+
+
+@pytest.mark.parametrize("user", ["cristian", "giuseppes"])
+def test_v28_stored_chat_gateway_is_masked(collector, user):
+    stored = ('<3> [nethvoice] acrobits {0}: whoami: Get "http://<IP>:<PORT>'
+              '/user/me": context deadline exceeded (<HOST> exceeded while '
+              'awaiting headers)'.format(user))
+    assert collector.mask(stored) == stored.replace(user, "<USER>")
+
+
+@pytest.mark.parametrize("line", [
+    "<3> [nethvoice] users: <NUM> of <NUM> accounts missing from the CTI at "
+    "once: nothing done",
+    "<3> [nethvoice] mobile: timeout",
+    "<3> [nethvoice] groups: timeout",
+    "<3> [freepbx] send alice: timeout",
+])
+def test_v28_other_lines_are_kept(collector, line):
+    assert collector.mask(line) == line
+
+
+def test_v28_masking_version(collector):
+    assert collector.MASKING_VERSION == 28
