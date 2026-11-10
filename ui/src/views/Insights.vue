@@ -18,7 +18,7 @@
       <cv-column>
         <NsInlineNotification
           kind="error"
-          :title="$t('action.get-configuration')"
+          :title="$t('error.cannot_load_configuration')"
           :description="error.getConfiguration"
           :showCloseButton="false"
         />
@@ -116,7 +116,7 @@
             :isLoading="loading.getConfiguration || loading.listFindings"
             :skeletonRows="5"
             :isErrorShown="!!error.listFindings"
-            :errorTitle="$t('action.list-findings')"
+            :errorTitle="$t('error.cannot_load_findings')"
             :errorDescription="error.listFindings"
             :itemsPerPageLabel="core.$t('pagination.items_per_page')"
             :rangeOfTotalItemsLabel="core.$t('pagination.range_of_total_items')"
@@ -135,6 +135,12 @@
                   <div>
                     {{ $t("insights.no_findings_filtered_description") }}
                   </div>
+                  <NsButton
+                    kind="tertiary"
+                    class="mg-top-lg"
+                    @click="resetFilters"
+                    >{{ $t("insights.reset_filters") }}
+                  </NsButton>
                 </template>
               </NsEmptyState>
               <NsEmptyState v-else :title="$t('insights.no_findings')">
@@ -396,6 +402,12 @@ export default {
     this.getConfiguration();
   },
   methods: {
+    resetFilters() {
+      this.searchFilter = "";
+      this.statusFilter = "open";
+      this.severityFilter = "all";
+      this.securityFilter = "without";
+    },
     formatDateTime(value) {
       return new Date(value).toLocaleString(this.$i18n.locale);
     },
