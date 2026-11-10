@@ -205,6 +205,20 @@
                     }}
                   </span>
                 </cv-data-table-cell>
+                <cv-data-table-cell class="table-overflow-menu-cell">
+                  <cv-overflow-menu
+                    v-if="logSearchTexts(row).length"
+                    flip-menu
+                    class="table-overflow-menu"
+                  >
+                    <cv-overflow-menu-item @click="searchInLogs(row)">
+                      <NsMenuItem
+                        :icon="Search20"
+                        :label="$t('insights.search_in_logs')"
+                      />
+                    </cv-overflow-menu-item>
+                  </cv-overflow-menu>
+                </cv-data-table-cell>
                 <template slot="expandedContent">
                   <div class="finding-details">
                     <div class="details-label">
@@ -262,23 +276,11 @@
                     <div class="details-label">
                       {{ $t("insights.evidence") }}
                     </div>
-                    <template v-if="row.evidence && row.evidence.length">
-                      <div
-                        v-for="(line, index) in row.evidence"
-                        :key="index"
-                        class="evidence-line"
-                      >
-                        <pre class="evidence">{{ line }}</pre>
-                        <NsButton
-                          v-if="logSearchText(line)"
-                          kind="ghost"
-                          size="small"
-                          :icon="Search16"
-                          @click="searchInLogs(row, line)"
-                          >{{ $t("insights.search_in_logs") }}
-                        </NsButton>
-                      </div>
-                    </template>
+                    <pre
+                      v-if="row.evidence && row.evidence.length"
+                      class="evidence"
+                      >{{ row.evidence.join("\n") }}</pre
+                    >
                     <div v-else>{{ $t("insights.no_evidence") }}</div>
                   </div>
                 </template>
@@ -304,12 +306,13 @@ import {
 } from "@nethserver/ns8-ui-lib";
 import Restart20 from "@carbon/icons-vue/es/restart/20";
 import Settings20 from "@carbon/icons-vue/es/settings/20";
-import Search16 from "@carbon/icons-vue/es/search/16";
+import Search20 from "@carbon/icons-vue/es/search/20";
 
 const SEVERITY_ORDER = { critical: 0, high: 1, medium: 2, low: 3 };
 const MASK_PLACEHOLDER = /<[A-Z][A-Z0-9_]*>/;
 const LOG_SEARCH_MIN_LENGTH = 4;
 const LOG_SEARCH_WINDOW_MS = 24 * 60 * 60 * 1000;
+const LOG_SEARCH_SPECIAL = /[.*+?^${}()|[\]\\]/g;
 
 export default {
   name: "Insights",
@@ -331,7 +334,7 @@ export default {
       },
       Restart20,
       Settings20,
-      Search16,
+      Search20,
       urlCheckInterval: null,
       isConfigLoaded: false,
       enabled: false,
@@ -351,6 +354,7 @@ export default {
         "nodes",
         "occurrence_count",
         "last_seen",
+        "actions",
       ],
       sortColumns: [
         "severity_rank",
@@ -359,6 +363,7 @@ export default {
         "nodes_text",
         "occurrence_count",
         "last_seen",
+        "actions",
       ],
       loading: {
         getConfiguration: false,
@@ -374,7 +379,7 @@ export default {
     ...mapState(["instanceName", "core", "appName"]),
     i18nTableColumns() {
       return this.tableColumns.map((column) =>
-        this.$t("insights.col_" + column)
+        column === "actions" ? "" : this.$t("insights.col_" + column)
       );
     },
     filteredFindings() {
@@ -436,7 +441,18 @@ export default {
         .reduce((a, b) => (b.length > a.length ? b : a), "");
       return best.length >= LOG_SEARCH_MIN_LENGTH ? best : "";
     },
-    searchInLogs(finding, line) {
+    logSearchTexts(finding) {
+      return [
+        ...new Set(
+          (finding.evidence || [])
+            .map((line) => this.logSearchText(line))
+            .filter(Boolean)
+        ),
+      ];
+    },
+    searchInLogs(finding) {
+      const texts = this.logSearchTexts(finding);
+      const regexp = texts.length > 1;
       const nodeIds = finding.node_refs?.length
         ? finding.node_refs.map((node) => node.node_id)
         : finding.nodes || [];
@@ -448,8 +464,12 @@ export default {
         )
       );
       const query = {
-        searchQuery: this.logSearchText(line),
-        regexp: "false",
+        searchQuery: regexp
+          ? texts
+              .map((text) => text.replace(LOG_SEARCH_SPECIAL, "\\$&"))
+              .join("|")
+          : texts[0],
+        regexp: String(regexp),
         context: nodeIds.length === 1 ? "node" : "cluster",
         selectedNodeId: nodeIds.length === 1 ? String(nodeIds[0]) : "",
         startDate: this.formatDate(start, "yyyy-MM-dd"),
@@ -707,8 +727,14 @@ export default {
   margin-bottom: $spacing-02;
 }
 
-.evidence-line {
-  margin-bottom: $spacing-03;
+.table-overflow-menu-cell {
+  position: relative;
+}
+
+.table-overflow-menu {
+  position: absolute;
+  top: 4px;
+  right: 1rem;
 }
 
 .evidence {
