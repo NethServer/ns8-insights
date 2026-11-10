@@ -1440,7 +1440,7 @@ def test_v25_empty_phonebook_search_is_kept(collector):
 AUTH_FAILED = ("<3> [dovecot] auth: Error: plain({u},192.0.2.4,<{s}>): "
                "user not found from any userdbs")
 AUTH_FAILED_TEMPLATE = ("<3> [dovecot] auth: Error: plain(<USER>,<IP>,<ID>): "
-                        "user <USER> found from any userdbs")
+                        "user not found from any userdbs")
 
 
 @pytest.mark.parametrize("user, session", [
@@ -1483,7 +1483,9 @@ def test_v26_dovecot_auth_shapes_are_masked(collector, raw, expected):
 def test_v26_stored_dovecot_auth_is_masked(collector):
     stored = ("<3> [dovecot] auth: Error: plain(alice,<IP>,<k++aQPemrXKBQQZ>): "
               "user <USER> found from any userdbs")
-    assert collector.mask(stored) == AUTH_FAILED_TEMPLATE
+    assert collector.mask(stored) == (
+        "<3> [dovecot] auth: Error: plain(<USER>,<IP>,<ID>): "
+        "user <USER> found from any userdbs")
 
 
 @pytest.mark.parametrize("line", [
@@ -1908,5 +1910,38 @@ def test_v26_other_units_are_kept(collector, line):
     assert collector.mask(line) == line
 
 
-def test_v26_masking_version(collector):
-    assert collector.MASKING_VERSION == 26
+# --------------------------------------------------------------------------
+# Masking version 27: a word that carries the sentence on after "user" is
+# not a name.
+# --------------------------------------------------------------------------
+
+@pytest.mark.parametrize("line", [
+    "<3> [dovecot] auth: Error: plain(<USER>,<IP>,<ID>): "
+    "user not found from any userdbs",
+    "<4> [nethcti] user is disabled",
+    "<4> [app] User was deleted",
+    "<4> [app] user has no mailbox",
+    "<4> [app] user does not exist",
+    "<4> [app] user doesn't exist",
+    "<4> [app] user unknown",
+    "<4> [app] user already exists",
+    "<4> [app] user cannot log in",
+    "<4> [app] user can't log in",
+])
+def test_v27_user_sentence_word_is_kept(collector, line):
+    assert collector.mask(line) == line
+
+
+@pytest.mark.parametrize("raw, expected", [
+    ("user notary logged in", "user <USER> logged in"),
+    ("user isabella logged in", "user <USER> logged in"),
+    ("user not-a-bot logged in", "user <USER> logged in"),
+    ("Invalid user not from 203.0.113.5 port 22",
+     "Invalid user <USER> from <IP> port <NUM>"),
+])
+def test_v27_names_like_sentence_words_are_masked(collector, raw, expected):
+    assert collector.mask(raw) == expected
+
+
+def test_v27_masking_version(collector):
+    assert collector.MASKING_VERSION == 27

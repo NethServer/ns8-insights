@@ -376,7 +376,12 @@ def sanitize_line(raw):
 #      ...: " and "improper command pipelining after ... from ...: ",
 #      become <DATA>, and the backup id in "backup77.service" and
 #      "backup77.timer" becomes <NUM>.
-MASKING_VERSION = 26
+#
+# 27: a word that carries the sentence on after "user" -- "not", "is",
+# "was", "has", "does", "doesn't", "unknown", "already", "cannot",
+# "can't" -- stays. Rule 14 took it for a name, so dovecot's "user not
+# found from any userdbs" read "user <USER> found", the opposite.
+MASKING_VERSION = 27
 
 # Placeholders already present in the input are left alone, which is what
 # makes mask() idempotent. Listed here so one rule can protect all of them.
@@ -990,6 +995,13 @@ def _fold_sip_call_ids(line):
                       '<ID>', line)
     return line
 
+
+# Words that follow "user" in a sentence, not as its name: rule 14 keeps
+# them. sshd's "invalid user <name>" has its own rule, so an account
+# literally called "not" is still folded there.
+_USER_SENTENCE_WORD = (r"(?:not|is|was|has|does|doesn't|unknown|already"
+                       r"|cannot|can't)(?![\w'-])")
+
 MASKING_RULES = [
     # 1. Volatile paths. Before any number rule, or /proc/12345 loses its
     #    shape and stops matching as a path at all.
@@ -1248,9 +1260,12 @@ MASKING_RULES = [
     #     (?!<) guard on both rules is what stops a second mask() pass
     #     from rewriting <USER> into <<USER>>. Punctuation that ends the
     #     name -- "user alice: missing", "user alice." -- stays, as it does
-    #     after a name that an earlier rule masked.
+    #     after a name that an earlier rule masked. A word that carries
+    #     the sentence on -- dovecot's "user not found", "user is
+    #     disabled" -- is not a name and stays.
     (
-        re.compile(r'(?i)\b(user(?:name)?)\s+(?!<)\S+?(?=[.:,;!?)"\']*(?:\s|$))'),
+        re.compile(r'(?i)\b(user(?:name)?)\s+(?!<)(?!' + _USER_SENTENCE_WORD +
+                   r')\S+?(?=[.:,;!?)"\']*(?:\s|$))'),
         r'\1 <USER>',
     ),
     # 14b. The same, written "user: name" -- nethcti's "(user: alessandro)".
